@@ -1,0 +1,2 @@
+# Minimal deps for the Vercel status endpoint only.
+# The full trading app uses requirements.txt and must run outside Vercel.

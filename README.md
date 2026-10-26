@@ -16,6 +16,21 @@ Live capital is deliberately disabled until you have months of simulated evidenc
 
 ---
 
+## Hosting (important)
+
+This is a **Streamlit** app. It needs a long-running process.
+
+| Platform | Suitable? | Notes |
+|----------|-----------|-------|
+| **Your computer** | ✅ Best for now | `streamlit run app.py` |
+| **Streamlit Community Cloud** | ✅ Recommended free host | Connect this GitHub repo at share.streamlit.io |
+| **Railway / Render** | ✅ Good | Free tiers available |
+| **Vercel** | ❌ Not for Streamlit | Only a status JSON endpoint deploys here. Real dashboard will not run on Vercel. |
+
+Vercel deployment is fixed so it no longer errors, but it only serves an info page. Use Streamlit Cloud or local for the actual trading UI.
+
+---
+
 ## Architecture
 
 ```
@@ -68,7 +83,7 @@ All limits live in `config.yaml`:
 | `risk.max_drawdown_pct`   | 0.10    | Trading halts at 10 % drawdown               |
 | `risk.max_daily_loss_pct` | 0.03    | Trading halts at 3 % daily loss              |
 | `strategy.lookback_days`  | 20      | Momentum lookback                            |
-| `strategy.momentum_threshold` | 0.02 | 2 % move required for a signal             |
+| `strategy.momentum_threshold` | 0.025 | Stricter momentum threshold                |
 
 Change these values carefully. The risk module reads them on every order.
 
@@ -95,20 +110,22 @@ Simulated profits are experimental results, not income.
 ```
 tactica-ai/
 ├── app.py                 # Streamlit dashboard
+├── run_autonomous.py      # Continuous trading loop
 ├── config.yaml            # All tunable parameters + hard risk limits
 ├── requirements.txt
 ├── .env.example
+├── api/                   # Vercel status endpoint only
 ├── src/
-│   ├── data/              # Market data client (Alpaca + simulation)
-│   ├── signals/           # Momentum and future signal generators
-│   ├── prediction/        # Probability estimator
-│   ├── risk/              # Hard risk gatekeeper
-│   ├── execution/         # Simulated + Alpaca paper executor
-│   ├── backtest/          # Event-driven backtester
+│   ├── data/
+│   ├── signals/           # Momentum + Mean-reversion (pendulum)
+│   ├── prediction/
+│   ├── risk/
+│   ├── execution/
+│   ├── backtest/
 │   └── utils/
-├── strategies/            # Higher-level strategy compositions
-├── data/                  # Local cache (git-ignored)
-├── logs/                  # Daily logs
+├── strategies/
+├── data/
+├── logs/
 └── tests/
 ```
 
@@ -127,8 +144,8 @@ tactica-ai/
 ## Next Steps After the Prototype
 
 1. Improve the predictor with a simple scikit-learn model trained only on past data.
-2. Add more signal families (mean-reversion, breakout) and ensemble them under risk.
-3. Extend the backtester with walk-forward optimization and Monte-Carlo path analysis.
+2. Add more signal families and ensemble them under risk.
+3. Extend the backtester with walk-forward optimization.
 4. Optional: run the bot headlessly on a cheap VPS only after multi-week paper evidence.
 5. Keep the $100 ceiling until the edge is statistically clear.
 
