@@ -1,70 +1,15 @@
-# Environment and secrets
 .env
-.env.local
-*.env
-keys.env
-mandate.json
-
-# Python
+.venv/
+venv/
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+*.pyc
 .pytest_cache/
 .mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-.tox/
-.nox/
-
-# Virtual environments
-venv/
-.venv/
-env/
-ENV/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Project specific
-logs/*
-!logs/.gitkeep
-data/cache/*
-data/raw/*
-!data/.gitkeep
-*.log
-streamlit_cache/
 .streamlit/secrets.toml
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Backtest results (keep structure)
-results/*
-!results/.gitkeep
+logs/
+*.log
+.DS_Store
+data/uploads/*
+!data/uploads/.gitkeep
+reports/output/*
+!reports/output/.gitkeep
