@@ -1,0 +1,76 @@
+# Tactica AI - Configuration
+# All monetary values are in USD. Risk limits are hard-enforced.
+
+project:
+  name: "Tactica AI"
+  version: "0.1.0"
+  mode: "paper"                    # paper | live (live requires explicit override + keys)
+
+# Capital & Risk Budget (hard limits)
+risk:
+  max_total_capital: 100.0         # Absolute maximum capital the system may use
+  max_position_pct: 0.20           # Max 20% of capital in any single position
+  max_portfolio_exposure: 0.80     # Max 80% of capital deployed at once
+  max_daily_loss_pct: 0.03         # Halt trading if daily loss exceeds 3%
+  max_drawdown_pct: 0.10           # Soft warning / hard stop at 10% drawdown
+  min_cash_reserve_pct: 0.15       # Always keep at least 15% in cash
+  max_open_positions: 5
+  allow_shorting: false            # Start long-only
+  trading_halted: false            # Can be set true by risk module
+
+# Universe
+universe:
+  default_symbols:
+    - "SPY"
+    - "QQQ"
+    - "IWM"
+    - "AAPL"
+    - "MSFT"
+    - "GOOGL"
+    - "AMZN"
+    - "NVDA"
+    - "META"
+    - "TSLA"
+  max_symbols: 20
+
+# Strategy defaults (Momentum)
+strategy:
+  name: "simple_momentum"
+  lookback_days: 20
+  momentum_threshold: 0.02         # 2% price change to generate signal
+  holding_period_days: 5
+  rebalance_frequency: "daily"     # daily | weekly
+
+# Prediction / Signal
+prediction:
+  horizon_days: 5
+  min_probability: 0.55            # Only act if P(positive return) > 55%
+  use_ml: false                    # Start with pure statistical rules
+
+# Data
+data:
+  timeframe: "1Day"
+  history_days: 365
+  cache_dir: "data/cache"
+  source: "alpaca"                 # alpaca | yfinance (fallback)
+
+# Execution
+execution:
+  order_type: "market"
+  time_in_force: "day"
+  slippage_bps: 5                  # 5 basis points assumed slippage for backtests
+  commission_per_trade: 0.0        # Alpaca equity is commission-free
+  min_notional: 1.0
+
+# Backtest
+backtest:
+  initial_capital: 100.0
+  start_date: "2023-01-01"
+  end_date: null                   # null = today
+  benchmark: "SPY"
+  include_costs: true
+
+# Dashboard
+dashboard:
+  refresh_seconds: 60
+  theme: "dark"
