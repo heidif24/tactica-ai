@@ -38,6 +38,22 @@ def setup_logging(level: str = "INFO") -> None:
 
 
 def get_env(key: str, default: str | None = None) -> str | None:
-    """Get environment variable after loading .env."""
+    """
+    Get a config value from (in order):
+    1. Streamlit secrets (when running on Streamlit Cloud)
+    2. OS environment / .env file
+    """
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets") and key in st.secrets:
+            val = st.secrets[key]
+            if val is not None and str(val).strip():
+                return str(val).strip()
+    except Exception:
+        pass
+
     load_dotenv()
-    return os.getenv(key, default)
+    val = os.getenv(key, default)
+    if val is not None:
+        return str(val).strip()
+    return default

@@ -173,14 +173,24 @@ class AlpacaExecutor:
 
     def get_account(self) -> dict:
         if not self._client:
-            return {}
-        acct = self._client.get_account()
-        return {
-            "cash": float(acct.cash),
-            "equity": float(acct.equity),
-            "buying_power": float(acct.buying_power),
-            "status": acct.status,
-        }
+            return {"error": "Alpaca client not configured (missing or invalid keys)"}
+        try:
+            acct = self._client.get_account()
+            return {
+                "cash": float(acct.cash),
+                "equity": float(acct.equity),
+                "buying_power": float(acct.buying_power),
+                "status": str(acct.status),
+            }
+        except Exception as e:
+            logger.error(f"Alpaca get_account failed: {e}")
+            return {
+                "error": str(e),
+                "hint": (
+                    "Check that your Streamlit secrets use PAPER keys "
+                    "(from the Paper Trading dashboard), with no extra quotes or spaces."
+                ),
+            }
 
     def submit_order(
         self,
