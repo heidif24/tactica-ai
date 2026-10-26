@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import Papa from "papaparse";
 import Link from "next/link";
-import { Upload, Play, Lock, Sparkles, FileSpreadsheet, AlertCircle } from "lucide-react";
+import { Upload, Play, Lock, Sparkles, FileSpreadsheet, AlertCircle, Download } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   LineChart, Line, Legend,
@@ -17,12 +17,19 @@ import {
   chiSquareTest,
   kaplanMeier,
   multilevelRandomIntercept,
+  coxRegression,
+  GOALS,
+  toolsForGoals,
+  buildNarrativeDraft,
+  buildRecommendations,
+  type GoalId,
   type RegressionResult,
   type AnovaResult,
   type TTestResult,
   type ChiSquareResult,
   type SurvivalResult,
   type MultilevelResult,
+  type CoxResult,
 } from "@/lib/stats";
 import { formatNumber } from "@/lib/utils";
 import { useUsage, FREE_LIMIT, PRO_PRICE } from "@/store/usage";
@@ -32,9 +39,12 @@ export default function AppPage() {
   const left = remaining();
   const [fileName, setFileName] = useState<string | null>(null);
   const [rows, setRows] = useState<Row[] | null>(null);
-  const [selected, setSelected] = useState<string[]>(STATS_CATALOG.map((c) => c.id));
+  const [goals, setGoals] = useState<GoalId[]>(["explore", "predict"]);
+  const [selected, setSelected] = useState<string[]>(() => toolsForGoals(["explore", "predict"]));
   const [bundle, setBundle] = useState<AnalysisBundle | null>(null);
   const [advanced, setAdvanced] = useState<Record<string, unknown>>({});
+  const [draft, setDraft] = useState<string>("");
+  const [recs, setRecs] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showUpgrade, setShowUpgrade] = useState(false);
@@ -51,15 +61,25 @@ export default function AppPage() {
     if (!rows?.length) return [] as string[];
     return columns.filter((c) => {
       const sample = rows!.slice(0, 50).map((r) => r[c]);
-      const nums = sample.filter((v) => v !== null && v !== "" && Number.isFinite(Number(v)));
-      return nums.length >= sample.length * 0.6;
+      return sample.filter((v) => v !== null && v !== "" && Number.isFinite(Number(v))).length >= sample.length * 0.6;
     });
   }, [rows, columns]);
+
+  const applyGoals = (next: GoalId[]) => {
+    setGoals(next);
+    setSelected(toolsForGoals(next.length ? next : ["explore"]));
+  };
+
+  const toggleGoal = (id: GoalId) => {
+    const next = goals.includes(id) ? goals.filter((g) => g !== id) : [...goals, id];
+    applyGoals(next);
+  };
 
   const onFile = useCallback((file: File) => {
     setError(null);
     setBundle(null);
     setAdvanced({});
+    setDraft("");
     setFileName(file.name);
     Papa.parse(file, {
       header: true,
@@ -103,20 +123,73 @@ export default function AppPage() {
     setBusy(true);
     setError(null);
     try {
-      setBundle(analyzeDataset(rows));
+      const base = analyzeDataset(rows);
+      setBundle(base);
       const adv: Record<string, unknown> = {};
-      if (selected.includes("regression") && yCol && xCols.length) adv.regression = linearRegression(rows, yCol, xCols);
-      if (selected.includes("anova") && yCol && factorCol) adv.anova = oneWayAnova(rows, yCol, factorCol);
-      if (selected.includes("ttest") && yCol && groupCol) adv.ttest = welchTTest(rows, yCol, groupCol);
-      if (selected.includes("chisq") && factorCol && groupCol && factorCol !== groupCol) adv.chisq = chiSquareTest(rows, factorCol, groupCol);
-      if (selected.includes("survival") && timeCol && eventCol) adv.survival = kaplanMeier(rows, timeCol, eventCol, groupCol || undefined);
-      if (selected.includes("multilevel") && yCol && clusterCol) adv.multilevel = multilevelRandomIntercept(rows, yCol, clusterCol, xCols);
+      const snippets: string[] = [];
+
+      if (selected.includes("regression") && yCol && xCols.length) {
+        const r = linearRegression(rows, yCol, xCols);
+        adv.regression = r;
+        if ("plainEnglish" in r) snippets.push(r.plainEnglish);
+      }
+      if (selected.includes("anova") && yCol && factorCol) {
+        const r = oneWayAnova(rows, yCol, factorCol);
+        adv.anova = r;
+        if ("plainEnglish" in r) snippets.push(r.plainEnglish);
+      }
+      if (selected.includes("ttest") && yCol && groupCol) {
+        const r = welchTTest(rows, yCol, groupCol);
+        adv.ttest = r;
+        if ("plainEnglish" in r) snippets.push(r.plainEnglish);
+      }
+      if (selected.includes("chisq") && factorCol && groupCol && factorCol !== groupCol) {
+        const r = chiSquareTest(rows, factorCol, groupCol);
+        adv.chisq = r;
+        if ("plainEnglish" in r) snippets.push(r.plainEnglish);
+      }
+      if (selected.includes("survival") && timeCol && eventCol) {
+        const r = kaplanMeier(rows, timeCol, eventCol, groupCol || undefined);
+        adv.survival = r;
+        if ("plainEnglish" in r) snippets.push(r.plainEnglish);
+      }
+      if (selected.includes("cox") && timeCol && eventCol && xCols.length) {
+        const r = coxRegression(rows, timeCol, eventCol, xCols);
+        adv.cox = r;
+        if ("plainEnglish" in r) snippets.push(r.plainEnglish);
+        if ("recommendations" in r) snippets.push(...r.recommendations.slice(0, 2));
+      }
+      if (selected.includes("multilevel") && yCol && clusterCol) {
+        const r = multilevelRandomIntercept(rows, yCol, clusterCol, xCols);
+        adv.multilevel = r;
+        if ("plainEnglish" in r) snippets.push(r.plainEnglish);
+      }
+
       setAdvanced(adv);
+      const narrative = buildNarrativeDraft({
+        fileName: fileName || undefined,
+        goals,
+        snippets,
+        n: base.profile.rows,
+        p: base.profile.columns,
+      });
+      setDraft(narrative);
+      setRecs(buildRecommendations(snippets, goals));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Analysis failed.");
     } finally {
       setBusy(false);
     }
+  };
+
+  const downloadBrief = () => {
+    const blob = new Blob([draft], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `lumen-brief-${fileName || "analysis"}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const missingChart = useMemo(() => {
@@ -135,7 +208,7 @@ export default function AppPage() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="font-display text-3xl text-ink-950">Statistical workspace</h1>
-            <p className="mt-1 text-sm text-ink-500">R · Stata · Python style — regression, ANOVA, survival, multilevel</p>
+            <p className="mt-1 text-sm text-ink-500">Goals → tools → models (incl. Cox) → client brief you can download</p>
           </div>
           <div className="flex items-center gap-3">
             <div className="rounded-full border border-ink-200 bg-white px-4 py-2 text-xs text-ink-600 shadow-soft">
@@ -174,10 +247,26 @@ export default function AppPage() {
             </div>
 
             <div className="rounded-2xl border bg-white p-6 shadow-soft">
-              <h2 className="text-sm font-semibold">2. Analyses (R / Stata)</h2>
-              <div className="mt-3 max-h-64 space-y-1 overflow-y-auto">
+              <h2 className="text-sm font-semibold">2. Client expectations / goals</h2>
+              <p className="mt-1 text-xs text-ink-500">Pick what the client needs — tools auto-select.</p>
+              <div className="mt-3 space-y-2">
+                {GOALS.map((g) => (
+                  <label key={g.id} className="flex cursor-pointer gap-2 rounded-lg border border-ink-50 px-2 py-2 text-sm hover:bg-ink-50">
+                    <input type="checkbox" className="mt-0.5" checked={goals.includes(g.id)} onChange={() => toggleGoal(g.id)} />
+                    <span>
+                      <span className="font-medium text-ink-900">{g.label}</span>
+                      <span className="block text-[11px] text-ink-500">{g.description}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border bg-white p-6 shadow-soft">
+              <h2 className="text-sm font-semibold">3. Tools (auto from goals — editable)</h2>
+              <div className="mt-3 max-h-48 space-y-1 overflow-y-auto">
                 {STATS_CATALOG.map((c) => (
-                  <label key={c.id} className="flex cursor-pointer flex-col rounded-lg px-2 py-1.5 text-sm hover:bg-ink-50">
+                  <label key={c.id} className="flex cursor-pointer flex-col rounded px-2 py-1 text-sm hover:bg-ink-50">
                     <span className="flex items-center gap-2">
                       <input type="checkbox" checked={selected.includes(c.id)} onChange={(e) => setSelected((p) => e.target.checked ? [...p, c.id] : p.filter((x) => x !== c.id))} />
                       <span className="font-medium">{c.label}</span>
@@ -190,15 +279,15 @@ export default function AppPage() {
 
             {rows && (
               <div className="rounded-2xl border bg-white p-6 shadow-soft">
-                <h2 className="text-sm font-semibold">3. Variable roles</h2>
+                <h2 className="text-sm font-semibold">4. Variable roles</h2>
                 <div className="mt-3 space-y-3 text-sm">
-                  <label className="block">Outcome (Y)
+                  <label className="block">Outcome (Y) / response
                     <select className="mt-1 w-full rounded-lg border px-2 py-1.5" value={yCol} onChange={(e) => setYCol(e.target.value)}>
                       <option value="">—</option>{columns.map((c) => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </label>
                   <div>
-                    <p className="mb-1">Predictors (X)</p>
+                    <p className="mb-1">Predictors / covariates (X) — regression, Cox, multilevel</p>
                     <div className="flex flex-wrap gap-1">{numericGuess.map((c) => (
                       <button key={c} type="button" onClick={() => toggleX(c)} className={`rounded-full px-2 py-0.5 text-xs ${xCols.includes(c) ? "bg-lumen-600 text-white" : "bg-ink-100"}`}>{c}</button>
                     ))}</div>
@@ -208,7 +297,7 @@ export default function AppPage() {
                       <option value="">—</option>{columns.map((c) => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </label>
-                  <label className="block">Second group (χ² / t-test)
+                  <label className="block">Second group / strata
                     <select className="mt-1 w-full rounded-lg border px-2 py-1.5" value={groupCol} onChange={(e) => setGroupCol(e.target.value)}>
                       <option value="">—</option>{columns.map((c) => <option key={c} value={c}>{c}</option>)}
                     </select>
@@ -224,7 +313,7 @@ export default function AppPage() {
                   </div>
                 </div>
                 <button disabled={!rows || busy} onClick={run} className="mt-6 flex w-full items-center justify-center gap-2 rounded-full bg-ink-950 py-3 text-sm font-semibold text-white disabled:opacity-40">
-                  {busy ? "Running…" : (<><Play className="h-4 w-4" /> Run full analysis</>)}
+                  {busy ? "Running…" : (<><Play className="h-4 w-4" /> Run analysis pack</>)}
                 </button>
               </div>
             )}
@@ -232,65 +321,72 @@ export default function AppPage() {
 
           <div className="space-y-6 lg:col-span-3">
             {error && <div className="flex gap-2 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><AlertCircle className="h-4 w-4" />{error}</div>}
-            {!bundle && !error && <div className="flex h-64 flex-col items-center justify-center rounded-2xl border border-dashed bg-white"><Sparkles className="h-8 w-8 text-ink-300" /><p className="mt-3 text-sm text-ink-600">Upload data and run the toolkit</p></div>}
+            {!bundle && !error && <div className="flex h-64 flex-col items-center justify-center rounded-2xl border border-dashed bg-white"><Sparkles className="h-8 w-8 text-ink-300" /><p className="mt-3 text-sm text-ink-600">Set goals, upload data, run the pack</p></div>}
+
+            {draft && (
+              <Sec title="Client brief (downloadable)">
+                <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-ink-50 p-4 text-xs text-ink-800">{draft}</pre>
+                <button onClick={downloadBrief} className="mt-3 inline-flex items-center gap-2 rounded-full bg-lumen-600 px-4 py-2 text-sm font-semibold text-white">
+                  <Download className="h-4 w-4" /> Download brief (.txt)
+                </button>
+                {recs.length > 0 && (
+                  <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-ink-700">
+                    {recs.map((r, i) => <li key={i}>{r}</li>)}
+                  </ul>
+                )}
+              </Sec>
+            )}
 
             {bundle && selected.includes("overview") && (
-              <Sec title="Dataset overview"><p className="text-sm text-ink-600">{bundle.profile.rows.toLocaleString()} rows × {bundle.profile.columns} cols · missing {formatNumber(bundle.profile.missingPct, 1)}% · dups removed {bundle.removedDuplicates}</p></Sec>
+              <Sec title="Overview"><p className="text-sm text-ink-600">{bundle.profile.rows.toLocaleString()} × {bundle.profile.columns} · missing {formatNumber(bundle.profile.missingPct, 1)}%</p></Sec>
             )}
             {bundle && selected.includes("descriptive") && bundle.descriptive.length > 0 && (
-              <Sec title="Descriptives"><Tbl h={["Col", "Mean", "Median", "SD", "Min", "Max"]} r={bundle.descriptive.map((d) => [d.column, formatNumber(d.mean), formatNumber(d.median), formatNumber(d.std), formatNumber(d.min), formatNumber(d.max)])} /></Sec>
+              <Sec title="Descriptives"><Tbl h={["Col", "Mean", "Median", "SD"]} r={bundle.descriptive.map((d) => [d.column, formatNumber(d.mean), formatNumber(d.median), formatNumber(d.std)])} /></Sec>
             )}
             {bundle && selected.includes("correlation") && (
-              <Sec title="Correlations">{bundle.correlations.slice(0, 10).map((c) => <div key={c.a + c.b} className="flex justify-between rounded bg-ink-50 px-3 py-1.5 text-sm"><span>{c.a} ↔ {c.b}</span><strong>{c.r.toFixed(3)}</strong></div>)}</Sec>
+              <Sec title="Correlations">{bundle.correlations.slice(0, 8).map((c) => <div key={c.a + c.b} className="flex justify-between text-sm"><span>{c.a} ↔ {c.b}</span><strong>{c.r.toFixed(3)}</strong></div>)}</Sec>
             )}
 
             {isReg(advanced.regression) && (
-              <Sec title="Linear regression (lm / regress)">
-                <p className="text-sm text-ink-600">{advanced.regression.plainEnglish}</p>
-                <Tbl h={["Term", "Est.", "SE", "t", "p"]} r={advanced.regression.coefficients.map((c) => [c.term, formatNumber(c.estimate, 4), formatNumber(c.stdError, 4), formatNumber(c.t, 3), c.p < 0.001 ? "<0.001" : formatNumber(c.p, 4)])} />
-              </Sec>
+              <Sec title="OLS regression"><p className="text-sm text-ink-600">{advanced.regression.plainEnglish}</p>
+                <Tbl h={["Term", "Est", "SE", "t", "p"]} r={advanced.regression.coefficients.map((c) => [c.term, formatNumber(c.estimate, 4), formatNumber(c.stdError, 4), formatNumber(c.t, 3), c.p < 0.001 ? "<0.001" : formatNumber(c.p, 4)])} /></Sec>
             )}
-            {isAnova(advanced.anova) && (
-              <Sec title="One-way ANOVA (aov / oneway)">
-                <p className="text-sm text-ink-600">{advanced.anova.plainEnglish}</p>
-                <Tbl h={["Group", "n", "Mean", "SD"]} r={advanced.anova.groups.map((g) => [g.level, String(g.n), formatNumber(g.mean), formatNumber(g.sd)])} />
-              </Sec>
-            )}
-            {isT(advanced.ttest) && <Sec title="Welch t-test"><p className="text-sm text-ink-600">{advanced.ttest.plainEnglish}</p></Sec>}
+            {isAnova(advanced.anova) && <Sec title="ANOVA"><p className="text-sm text-ink-600">{advanced.anova.plainEnglish}</p></Sec>}
+            {isT(advanced.ttest) && <Sec title="t-test"><p className="text-sm text-ink-600">{advanced.ttest.plainEnglish}</p></Sec>}
             {isChi(advanced.chisq) && <Sec title="Chi-square"><p className="text-sm text-ink-600">{advanced.chisq.plainEnglish}</p></Sec>}
+
             {isSurv(advanced.survival) && (
-              <Sec title="Kaplan–Meier survival">
+              <Sec title="Kaplan–Meier">
                 <p className="mb-2 text-sm text-ink-600">{advanced.survival.plainEnglish}</p>
-                <div className="h-56">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#eeeef0" />
-                      <XAxis dataKey="time" type="number" tick={{ fontSize: 11 }} allowDuplicatedCategory={false} />
-                      <YAxis domain={[0, 1]} tick={{ fontSize: 11 }} />
-                      <Tooltip /><Legend />
-                      {advanced.survival.curves.map((c, i) => (
-                        <Line key={c.group} data={c.points} dataKey="survival" name={c.group} type="stepAfter" dot={false} stroke={i ? "#f59e0b" : "#0c8ce9"} strokeWidth={2} />
-                      ))}
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
+                <div className="h-52"><ResponsiveContainer width="100%" height="100%"><LineChart>
+                  <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="time" type="number" allowDuplicatedCategory={false} /><YAxis domain={[0, 1]} /><Tooltip /><Legend />
+                  {advanced.survival.curves.map((c, i) => <Line key={c.group} data={c.points} dataKey="survival" name={c.group} type="stepAfter" dot={false} stroke={i ? "#f59e0b" : "#0c8ce9"} strokeWidth={2} />)}
+                </LineChart></ResponsiveContainer></div>
               </Sec>
             )}
+
+            {isCox(advanced.cox) && (
+              <Sec title="Cox proportional hazards (coxph / stcox)">
+                <p className="text-sm text-ink-600">{advanced.cox.plainEnglish}</p>
+                <p className="mt-1 text-xs text-ink-400">n={advanced.cox.n} · events={advanced.cox.events}</p>
+                <Tbl h={["Covariate", "coef", "HR", "SE", "z", "p"]} r={advanced.cox.coefficients.map((c) => [c.term, formatNumber(c.coef, 4), formatNumber(c.hr, 3), formatNumber(c.se, 4), formatNumber(c.z, 3), c.p < 0.001 ? "<0.001" : formatNumber(c.p, 4)])} />
+              </Sec>
+            )}
+            {"cox" in advanced && advanced.cox && "error" in (advanced.cox as object) && (
+              <Sec title="Cox"><p className="text-sm text-amber-700">{(advanced.cox as { error: string }).error}</p></Sec>
+            )}
+
             {isML(advanced.multilevel) && (
-              <Sec title="Multilevel random intercept (lmer / mixed)">
+              <Sec title="Multilevel (lmer / mixed)">
                 <p className="text-sm text-ink-600">{advanced.multilevel.plainEnglish}</p>
                 <Tbl h={["Term", "Estimate"]} r={advanced.multilevel.fixed.map((f) => [f.term, formatNumber(f.estimate, 4)])} />
-                <p className="mt-2 text-xs text-ink-500">ICC={formatNumber(advanced.multilevel.icc, 3)} · groups={advanced.multilevel.nGroups}</p>
               </Sec>
             )}
 
             {bundle && selected.includes("missing") && (
-              <Sec title="Missing data">{bundle.missing.length === 0 ? <p className="text-sm">None</p> : (
-                <div className="h-48"><ResponsiveContainer width="100%" height="100%"><BarChart data={missingChart} layout="vertical"><CartesianGrid strokeDasharray="3 3" /><XAxis type="number" unit="%" /><YAxis type="category" dataKey="name" width={90} /><Tooltip /><Bar dataKey="pct" fill="#0c8ce9" /></BarChart></ResponsiveContainer></div>
+              <Sec title="Missing">{bundle.missing.length === 0 ? <p className="text-sm">None</p> : (
+                <div className="h-40"><ResponsiveContainer width="100%" height="100%"><BarChart data={missingChart} layout="vertical"><XAxis type="number" unit="%" /><YAxis type="category" dataKey="name" width={80} /><Bar dataKey="pct" fill="#0c8ce9" /></BarChart></ResponsiveContainer></div>
               )}</Sec>
-            )}
-            {bundle && selected.includes("quality") && (
-              <Sec title="Quality"><ul className="text-sm space-y-1"><li>Duplicates: <strong>{bundle.quality.duplicates}</strong></li><li>Missing: <strong>{formatNumber(bundle.quality.avgMissingPct, 1)}%</strong></li></ul></Sec>
             )}
           </div>
         </div>
@@ -310,4 +406,5 @@ function isAnova(x: unknown): x is AnovaResult { return !!x && typeof x === "obj
 function isT(x: unknown): x is TTestResult { return !!x && typeof x === "object" && (x as TTestResult).type === "ttest"; }
 function isChi(x: unknown): x is ChiSquareResult { return !!x && typeof x === "object" && (x as ChiSquareResult).type === "chisq"; }
 function isSurv(x: unknown): x is SurvivalResult { return !!x && typeof x === "object" && (x as SurvivalResult).type === "survival"; }
+function isCox(x: unknown): x is CoxResult { return !!x && typeof x === "object" && (x as CoxResult).type === "cox"; }
 function isML(x: unknown): x is MultilevelResult { return !!x && typeof x === "object" && (x as MultilevelResult).type === "multilevel"; }
