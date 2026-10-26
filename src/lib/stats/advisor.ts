@@ -1,0 +1,187 @@
+/**
+ * Client goals → recommended analyses + creative narrative drafts
+ */
+
+export type GoalId =
+  | "explore"
+  | "compare_groups"
+  | "predict"
+  | "survival"
+  | "hierarchy"
+  | "association"
+  | "quality"
+  | "report";
+
+export interface Goal {
+  id: GoalId;
+  label: string;
+  description: string;
+  tools: string[]; // analysis ids
+}
+
+export const GOALS: Goal[] = [
+  {
+    id: "explore",
+    label: "Explore & describe the data",
+    description: "First look: shape, missingness, distributions, correlations.",
+    tools: ["overview", "descriptive", "correlation", "missing", "quality"],
+  },
+  {
+    id: "compare_groups",
+    label: "Compare groups",
+    description: "Do averages or rates differ across categories?",
+    tools: ["overview", "ttest", "anova", "chisq", "descriptive"],
+  },
+  {
+    id: "predict",
+    label: "Explain or predict an outcome",
+    description: "Which factors relate to a continuous outcome?",
+    tools: ["overview", "correlation", "regression", "descriptive", "quality"],
+  },
+  {
+    id: "survival",
+    label: "Time-to-event / survival",
+    description: "When do events happen, and what shifts the hazard?",
+    tools: ["overview", "survival", "cox", "descriptive"],
+  },
+  {
+    id: "hierarchy",
+    label: "Clustered / hierarchical data",
+    description: "Observations nested in groups (schools, clinics, regions).",
+    tools: ["overview", "multilevel", "regression", "anova", "descriptive"],
+  },
+  {
+    id: "association",
+    label: "Associations between variables",
+    description: "Relationships and independence tests.",
+    tools: ["correlation", "chisq", "regression", "overview"],
+  },
+  {
+    id: "quality",
+    label: "Data quality audit",
+    description: "Missing data, duplicates, constant columns.",
+    tools: ["overview", "missing", "quality"],
+  },
+  {
+    id: "report",
+    label: "Full analytical pack",
+    description: "Run a broad toolkit and draft a client-ready narrative.",
+    tools: [
+      "overview",
+      "descriptive",
+      "correlation",
+      "ttest",
+      "anova",
+      "chisq",
+      "regression",
+      "survival",
+      "cox",
+      "multilevel",
+      "missing",
+      "quality",
+    ],
+  },
+];
+
+export function toolsForGoals(goalIds: GoalId[]): string[] {
+  const set = new Set<string>();
+  for (const g of GOALS) {
+    if (goalIds.includes(g.id)) g.tools.forEach((t) => set.add(t));
+  }
+  return [...set];
+}
+
+export interface NarrativeInput {
+  fileName?: string;
+  goals: GoalId[];
+  snippets: string[]; // plainEnglish lines from models
+  n?: number;
+  p?: number;
+}
+
+/** Build a client-facing draft they can download */
+export function buildNarrativeDraft(input: NarrativeInput): string {
+  const date = new Date().toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+  const goalLabels = GOALS.filter((g) => input.goals.includes(g.id))
+    .map((g) => g.label)
+    .join("; ");
+
+  const lines: string[] = [];
+  lines.push("LUMEN — ANALYTICAL BRIEF");
+  lines.push(`Generated ${date}`);
+  if (input.fileName) lines.push(`Dataset: ${input.fileName}`);
+  if (input.n != null) lines.push(`Sample size (cleaned): ${input.n.toLocaleString()} rows`);
+  lines.push("");
+  lines.push("1. PURPOSE");
+  lines.push(
+    goalLabels
+      ? `This run was guided by client goals: ${goalLabels}.`
+      : "This run used a general exploratory configuration."
+  );
+  lines.push(
+    "The toolkit selected methods aligned with those goals (descriptives, group tests, regression, survival, multilevel, or quality checks as appropriate)."
+  );
+  lines.push("");
+  lines.push("2. KEY FINDINGS");
+  if (input.snippets.length) {
+    input.snippets.forEach((s, i) => lines.push(`(${i + 1}) ${s}`));
+  } else {
+    lines.push("No model snippets were produced — check variable roles and selected tools.");
+  }
+  lines.push("");
+  lines.push("3. INTERPRETIVE NOTES");
+  lines.push(
+    "• Statistical significance is not the same as practical importance — interpret effect sizes in context."
+  );
+  lines.push(
+    "• Observational associations are not automatic proof of causation without design support."
+  );
+  lines.push(
+    "• Survival and Cox models assume coherent coding of time and event indicators (event = 1)."
+  );
+  lines.push(
+    "• Multilevel models account for clustering; the ICC shows how much variation sits between groups."
+  );
+  lines.push("");
+  lines.push("4. RECOMMENDED NEXT STEPS");
+  lines.push("• Validate coding of outcomes, events, and group identifiers.");
+  lines.push("• Sensitivity-check: drop outliers, alternative specifications, stratified samples.");
+  lines.push("• For formal reporting, add confidence intervals and diagnostics (residuals, PH tests).");
+  lines.push("• Align the narrative with the decision the client must make.");
+  lines.push("");
+  lines.push("5. DISCLAIMER");
+  lines.push(
+    "This brief is generated by Lumen for analysis and decision support. It is not a substitute for professional statistical review where regulatory or clinical stakes are high."
+  );
+  lines.push("");
+  lines.push("— End of brief —");
+  return lines.join("\n");
+}
+
+export function buildRecommendations(snippets: string[], goals: GoalId[]): string[] {
+  const recs: string[] = [];
+  if (goals.includes("survival") || goals.includes("report")) {
+    recs.push("For time-to-event work: report median survival and Cox hazard ratios side by side.");
+  }
+  if (goals.includes("predict") || goals.includes("report")) {
+    recs.push("For prediction: prefer adjusted R² and residual checks; avoid over-fitting with too many predictors.");
+  }
+  if (goals.includes("hierarchy")) {
+    recs.push("With clustered data: lead with ICC, then fixed effects — readers need both levels of the story.");
+  }
+  if (goals.includes("compare_groups")) {
+    recs.push("When comparing groups: pair significance tests with plain mean differences and sample sizes.");
+  }
+  if (snippets.some((s) => /p = 0\.0|p < 0\.05|significant/i.test(s))) {
+    recs.push("At least one result is significant at 5% — state the effect size before the p-value in client language.");
+  }
+  if (snippets.some((s) => /No significant|no covariate reached/i.test(s))) {
+    recs.push("Null results are informative: say what was ruled out, not only what was found.");
+  }
+  recs.push("Export this brief and attach key tables when sharing with stakeholders.");
+  return recs;
+}
