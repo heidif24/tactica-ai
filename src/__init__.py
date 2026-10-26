@@ -1,4 +1,3 @@
-"""Tactica AI - Modular AI Trading Lab."""
+"""Lumen – AI-powered data analysis system."""
 
-__version__ = "0.1.0"
-__author__ = "Tactica AI"
+__version__ = "1.0.0"
