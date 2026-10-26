@@ -5,29 +5,27 @@ Run with:  streamlit run app.py
 
 from __future__ import annotations
 
+import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-# Ensure project root is on path
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
 from src.utils.helpers import load_config, setup_logging
 from src.data.market_data import MarketDataClient
 from src.signals.momentum import MomentumSignal
+from src.signals.mean_reversion import MeanReversionSignal
 from src.prediction.simple_predictor import SimplePredictor
 from src.risk.risk_manager import RiskManager
 from src.execution.alpaca_executor import SimulatedExecutor, AlpacaExecutor
 from src.backtest.backtester import Backtester
 
-# -----------------------------------------------------------------------------
-# Page setup
-# -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Tactica AI",
     page_icon="📈",
@@ -56,10 +54,18 @@ def main():
         "Evidence before live capital"
     )
 
-    # Sidebar
     with st.sidebar:
         st.header("Controls")
-        mode = st.radio("Mode", ["Dashboard", "Backtest", "Live Paper (Alpaca)"], index=0)
+        mode = st.radio(
+            "Mode",
+            ["Dashboard", "Backtest", "Live Paper", "Autonomous Control"],
+            index=0,
+        )
+        strategy_choice = st.selectbox(
+            "Strategy",
+            ["Momentum (trend)", "Mean-Reversion (pendulum)", "Both (conservative)"],
+            index=2,
+        )
         symbols = st.multiselect(
             "Universe",
             options=config["universe"]["default_symbols"],
@@ -79,14 +85,28 @@ def main():
     risk = get_risk_manager()
 
     if mode == "Dashboard":
-        render_dashboard(data_client, risk, symbols)
+        render_dashboard(data_client, risk, symbols, strategy_choice)
     elif mode == "Backtest":
         render_backtest(data_client, symbols)
-    else:
+    elif mode == "Live Paper":
         render_live_paper(data_client, risk, symbols)
+    else:
+        render_autonomous_control(symbols)
 
 
-def render_dashboard(data_client: MarketDataClient, risk: RiskManager, symbols: list[str]):
+def get_signal_generators(strategy_choice: str):
+    gens = []
+    if "Momentum" in strategy_choice or "Both" in strategy_choice:
+        gens.append(MomentumSignal(
+            lookback=config["strategy"]["lookback_days"],
+            threshold=config["strategy"]["momentum_threshold"],
+        ))
+    if "Mean-Reversion" in strategy_choice or "Both" in strategy_choice:
+        gens.append(MeanReversionSignal(lookback=20, z_entry=1.8))
+    return gens
+
+
+def render_dashboard(data_client, risk, symbols, strategy_choice):
     st.header("Market Overview & Signals")
 
     col1, col2, col3, col4 = st.columns(4)
@@ -94,19 +114,15 @@ def render_dashboard(data_client: MarketDataClient, risk: RiskManager, symbols: 
     col1.metric("Equity", f"${status['equity']:.2f}")
     col2.metric("Cash", f"${status['cash']:.2f}")
     col3.metric("Exposure", f"{status['exposure_pct']:.1f}%")
-    col4.metric("Drawdown", f"{status['drawdown_pct']:.1f}%",
-                delta_color="inverse")
+    col4.metric("Drawdown", f"{status['drawdown_pct']:.1f}%", delta_color="inverse")
 
     if status["trading_halted"]:
         st.error("⛔ TRADING HALTED by risk controls")
 
-    signal_gen = MomentumSignal(
-        lookback=config["strategy"]["lookback_days"],
-        threshold=config["strategy"]["momentum_threshold"],
-    )
+    gens = get_signal_generators(strategy_choice)
     predictor = SimplePredictor(
         horizon_days=config["prediction"]["horizon_days"],
-        min_prob=config["prediction"]["min_probability"],
+        min_prob=0.58,
     )
 
     rows = []
@@ -115,16 +131,21 @@ def render_dashboard(data_client: MarketDataClient, risk: RiskManager, symbols: 
         with st.spinner(f"Loading {sym}..."):
             bars = data_client.get_bars(sym)
             price_data[sym] = bars
-            sig = signal_gen.generate(sym, bars)
+            best_sig = None
+            for gen in gens:
+                sig = gen.generate(sym, bars)
+                if sig and sig.signal != "hold":
+                    if best_sig is None or sig.strength > best_sig.strength:
+                        best_sig = sig
             pred = predictor.predict(sym, bars)
             latest = float(bars["close"].iloc[-1]) if not bars.empty else None
             rows.append({
                 "Symbol": sym,
                 "Price": latest,
-                "Signal": sig.signal.upper() if sig else "—",
-                "Strength": f"{sig.strength:.2f}" if sig else "—",
+                "Signal": best_sig.signal.upper() if best_sig else "—",
+                "Strength": f"{best_sig.strength:.2f}" if best_sig else "—",
                 "P(up)": f"{pred.probability_up:.1%}" if pred else "—",
-                "Reason": sig.reason if sig else "",
+                "Reason": best_sig.reason if best_sig else "",
             })
 
     st.subheader("Current Signals")
@@ -136,30 +157,19 @@ def render_dashboard(data_client: MarketDataClient, risk: RiskManager, symbols: 
         df = price_data[selected].tail(120)
         fig = go.Figure(data=[
             go.Candlestick(
-                x=df.index,
-                open=df["open"],
-                high=df["high"],
-                low=df["low"],
-                close=df["close"],
-                name=selected,
+                x=df.index, open=df["open"], high=df["high"],
+                low=df["low"], close=df["close"], name=selected,
             )
         ])
         fig.update_layout(
             title=f"{selected} – Last 120 sessions",
-            xaxis_rangeslider_visible=False,
-            height=420,
-            template="plotly_dark",
+            xaxis_rangeslider_visible=False, height=420, template="plotly_dark",
         )
         st.plotly_chart(fig, use_container_width=True)
 
 
-def render_backtest(data_client: MarketDataClient, symbols: list[str]):
+def render_backtest(data_client, symbols):
     st.header("Strategy Backtest")
-    st.markdown(
-        "Runs the momentum strategy on historical data with realistic slippage "
-        "and the same risk limits. This is the first evidence gate."
-    )
-
     col_a, col_b = st.columns(2)
     start = col_a.date_input("Start", value=datetime(2023, 1, 1))
     end = col_b.date_input("End", value=datetime.utcnow().date())
@@ -175,11 +185,9 @@ def render_backtest(data_client: MarketDataClient, symbols: list[str]):
                 )
                 if not bars.empty:
                     data[sym] = bars
-
             if not data:
-                st.error("No data returned. Check symbols or API keys.")
+                st.error("No data returned.")
                 return
-
             bt = Backtester(config)
             result = bt.run(data)
 
@@ -191,61 +199,35 @@ def render_backtest(data_client: MarketDataClient, symbols: list[str]):
         c3.metric("Sharpe", f"{m.get('sharpe_ratio', 0):.2f}")
         c4.metric("Win Rate", f"{m.get('win_rate_pct', 0):.1f}%")
 
-        if m.get("benchmark_return_pct") is not None:
-            st.info(f"Benchmark ({config['backtest']['benchmark']}) return: {m['benchmark_return_pct']:.1f}%")
-
         fig = go.Figure()
         fig.add_trace(go.Scatter(
-            x=result.equity_curve.index,
-            y=result.equity_curve.values,
-            mode="lines",
-            name="Strategy Equity",
-            line=dict(color="#00cc96"),
+            x=result.equity_curve.index, y=result.equity_curve.values,
+            mode="lines", name="Strategy Equity", line=dict(color="#00cc96"),
         ))
-        fig.update_layout(
-            title="Equity Curve ($100 start)",
-            height=400,
-            template="plotly_dark",
-            yaxis_title="Equity ($)",
-        )
+        fig.update_layout(title="Equity Curve ($100 start)", height=400, template="plotly_dark")
         st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("Trade Log (last 20)")
-        trade_df = pd.DataFrame([
-            {
-                "Time": t.timestamp,
-                "Symbol": t.symbol,
-                "Side": t.side.upper(),
-                "Qty": round(t.qty, 4),
-                "Price": round(t.price, 2),
-                "PnL": round(t.pnl, 2),
-            }
-            for t in result.trades[-20:]
-        ])
-        st.dataframe(trade_df, use_container_width=True, hide_index=True)
 
-
-def render_live_paper(data_client: MarketDataClient, risk: RiskManager, symbols: list[str]):
+def render_live_paper(data_client, risk, symbols):
     st.header("Paper Trading (Alpaca or Local Simulation)")
-    st.warning(
-        "This mode places **paper** orders only. Live capital is disabled until "
-        "you explicitly change configuration and accept the risk of loss."
-    )
+    st.warning("Paper orders only. Live capital is disabled by design.")
 
     use_alpaca = st.checkbox("Use Alpaca paper account (requires API keys in .env)", value=False)
 
     if "sim_executor" not in st.session_state:
-        st.session_state.sim_executor = SimulatedExecutor(risk, initial_cash=config["risk"]["max_total_capital"])
+        st.session_state.sim_executor = SimulatedExecutor(
+            risk, initial_cash=config["risk"]["max_total_capital"]
+        )
 
     executor = st.session_state.sim_executor
+    alpaca = None
     if use_alpaca:
         alpaca = AlpacaExecutor(risk)
         if alpaca.is_live_paper:
             st.success("Connected to Alpaca paper trading.")
-            acct = alpaca.get_account()
-            st.json(acct)
+            st.json(alpaca.get_account())
         else:
-            st.error("Alpaca keys not found or invalid. Falling back to local simulation.")
+            st.error("Alpaca keys not found. Falling back to simulation.")
             use_alpaca = False
 
     st.subheader("Manual Order Ticket (risk-checked)")
@@ -255,18 +237,110 @@ def render_live_paper(data_client: MarketDataClient, risk: RiskManager, symbols:
     qty = c3.number_input("Qty", min_value=0.001, value=1.0, step=0.1)
     if c4.button("Submit"):
         price = data_client.get_latest_price(sym) or 100.0
-        if use_alpaca and alpaca.is_live_paper:
+        if use_alpaca and alpaca and alpaca.is_live_paper:
             order = alpaca.submit_order(sym, side, qty, price)
         else:
             order = executor.submit_order(sym, side, qty, price)
         if order.status == "filled":
             st.success(f"Filled {order.side} {order.filled_qty} {order.symbol} @ {order.filled_avg_price}")
         else:
-            st.error(f"Rejected / Error: {order.message}")
+            st.error(f"Rejected: {order.message}")
 
     st.subheader("Account Snapshot")
-    st.json(executor.get_account() if not use_alpaca else alpaca.get_account())
+    st.json(executor.get_account() if not use_alpaca else (alpaca.get_account() if alpaca else {}))
     st.json(risk.status_report())
+
+
+def render_autonomous_control(symbols):
+    st.header("🤖 Autonomous Runner Control Panel")
+    st.markdown(
+        "Start or stop the continuous trading loop from the browser. "
+        "The process runs in the background and respects all risk limits."
+    )
+
+    st.warning(
+        "**Important:** There is no strategy that guarantees daily profits. "
+        "This runner will trade only when signals pass the risk gates. "
+        "Expect flat or losing days. The goal is controlled experimentation, not guaranteed income."
+    )
+
+    col1, col2 = st.columns(2)
+    interval = col1.selectbox(
+        "Cycle interval",
+        options=[60, 120, 300, 600],
+        format_func=lambda x: f"{x} seconds ({x//60} min)" if x >= 60 else f"{x}s",
+        index=2,
+    )
+    use_alpaca = col2.checkbox("Use Alpaca paper keys", value=False)
+
+    if "runner_proc" not in st.session_state:
+        st.session_state.runner_proc = None
+    if "runner_log" not in st.session_state:
+        st.session_state.runner_log = []
+
+    proc = st.session_state.runner_proc
+    is_running = proc is not None and proc.poll() is None
+
+    c_start, c_stop, c_status = st.columns(3)
+
+    with c_start:
+        if st.button("▶ Start Autonomous Runner", type="primary", disabled=is_running):
+            cmd = [
+                sys.executable, str(ROOT / "run_autonomous.py"),
+                "--interval", str(interval),
+            ]
+            if use_alpaca:
+                cmd.append("--alpaca")
+            if symbols:
+                cmd.extend(["--symbols", ",".join(symbols)])
+
+            try:
+                p = subprocess.Popen(
+                    cmd, cwd=str(ROOT),
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                )
+                st.session_state.runner_proc = p
+                st.session_state.runner_log.append(
+                    f"{datetime.now().strftime('%H:%M:%S')} – Started (PID {p.pid})"
+                )
+                st.success(f"Runner started (PID {p.pid})")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to start: {e}")
+
+    with c_stop:
+        if st.button("⏹ Stop Runner", disabled=not is_running):
+            if proc:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                st.session_state.runner_log.append(
+                    f"{datetime.now().strftime('%H:%M:%S')} – Stopped"
+                )
+                st.session_state.runner_proc = None
+                st.success("Runner stopped")
+                st.rerun()
+
+    with c_status:
+        if is_running:
+            st.success(f"Running (PID {proc.pid})")
+        else:
+            st.info("Not running")
+
+    st.subheader("Recent Control Log")
+    for line in st.session_state.runner_log[-15:]:
+        st.text(line)
+
+    st.markdown("---")
+    st.markdown(
+        "**How it works under the hood**\n"
+        "- The runner evaluates the selected strategy every cycle.\n"
+        "- Every order still goes through the hard risk module.\n"
+        "- It auto-halts on daily loss or max drawdown.\n"
+        "- You can also run it from the terminal: `python run_autonomous.py --alpaca`"
+    )
 
 
 if __name__ == "__main__":
