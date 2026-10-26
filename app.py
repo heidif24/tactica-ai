@@ -211,8 +211,14 @@ def render_backtest(data_client, symbols):
 def render_live_paper(data_client, risk, symbols):
     st.header("Paper Trading (Alpaca or Local Simulation)")
     st.warning("Paper orders only. Live capital is disabled by design.")
+    st.caption(
+        "On Streamlit Cloud add secrets as:\n"
+        "ALPACA_API_KEY = \"your_paper_key\"\n"
+        "ALPACA_SECRET_KEY = \"your_paper_secret\"\n"
+        "(Use Paper Trading keys from app.alpaca.markets)"
+    )
 
-    use_alpaca = st.checkbox("Use Alpaca paper account (requires API keys in .env)", value=False)
+    use_alpaca = st.checkbox("Use Alpaca paper account", value=False)
 
     if "sim_executor" not in st.session_state:
         st.session_state.sim_executor = SimulatedExecutor(
@@ -221,13 +227,25 @@ def render_live_paper(data_client, risk, symbols):
 
     executor = st.session_state.sim_executor
     alpaca = None
+    account_info = {}
+
     if use_alpaca:
         alpaca = AlpacaExecutor(risk)
         if alpaca.is_live_paper:
-            st.success("Connected to Alpaca paper trading.")
-            st.json(alpaca.get_account())
+            account_info = alpaca.get_account()
+            if "error" in account_info:
+                st.error("Alpaca client created but account call failed.")
+                st.json(account_info)
+                st.info(
+                    "Common causes: live keys instead of paper keys, "
+                    "extra quotes/spaces in Secrets, or wrong dashboard mode when keys were created."
+                )
+                use_alpaca = False
+            else:
+                st.success("Connected to Alpaca paper trading.")
+                st.json(account_info)
         else:
-            st.error("Alpaca keys not found. Falling back to simulation.")
+            st.error("Alpaca keys not found in Streamlit Secrets. Using local $100 simulation.")
             use_alpaca = False
 
     st.subheader("Manual Order Ticket (risk-checked)")
@@ -241,13 +259,16 @@ def render_live_paper(data_client, risk, symbols):
             order = alpaca.submit_order(sym, side, qty, price)
         else:
             order = executor.submit_order(sym, side, qty, price)
-        if order.status == "filled":
-            st.success(f"Filled {order.side} {order.filled_qty} {order.symbol} @ {order.filled_avg_price}")
+        if order.status in ("filled", "accepted", "new", "pending_new"):
+            st.success(f"{order.status.upper()}: {order.side} {order.qty} {order.symbol} — {order.message}")
         else:
-            st.error(f"Rejected: {order.message}")
+            st.error(f"Rejected / Error: {order.message}")
 
     st.subheader("Account Snapshot")
-    st.json(executor.get_account() if not use_alpaca else (alpaca.get_account() if alpaca else {}))
+    if use_alpaca and alpaca and account_info and "error" not in account_info:
+        st.json(account_info)
+    else:
+        st.json(executor.get_account())
     st.json(risk.status_report())
 
 
@@ -261,7 +282,7 @@ def render_autonomous_control(symbols):
     st.warning(
         "**Important:** There is no strategy that guarantees daily profits. "
         "This runner will trade only when signals pass the risk gates. "
-        "Expect flat or losing days. The goal is controlled experimentation, not guaranteed income."
+        "Expect flat or losing days."
     )
 
     col1, col2 = st.columns(2)
@@ -332,15 +353,6 @@ def render_autonomous_control(symbols):
     st.subheader("Recent Control Log")
     for line in st.session_state.runner_log[-15:]:
         st.text(line)
-
-    st.markdown("---")
-    st.markdown(
-        "**How it works under the hood**\n"
-        "- The runner evaluates the selected strategy every cycle.\n"
-        "- Every order still goes through the hard risk module.\n"
-        "- It auto-halts on daily loss or max drawdown.\n"
-        "- You can also run it from the terminal: `python run_autonomous.py --alpaca`"
-    )
 
 
 if __name__ == "__main__":
