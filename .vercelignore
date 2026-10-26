@@ -1,0 +1,13 @@
+requirements.txt
+requirements-vercel.txt
+app.py
+config.yaml
+run_autonomous.py
+SETUP.md
+strategies
+tests
+api
+data
+logs
+*.py
+!src/app/**
