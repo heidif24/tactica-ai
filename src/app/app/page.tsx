@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import Papa from "papaparse";
 import Link from "next/link";
-import { Upload, Play, Lock, Sparkles, FileSpreadsheet, AlertCircle, Download } from "lucide-react";
+import { Upload, Play, Lock, Sparkles, AlertCircle, Download, FileText } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   LineChart, Line, Legend,
@@ -22,6 +22,8 @@ import {
   toolsForGoals,
   buildNarrativeDraft,
   buildRecommendations,
+  downloadText,
+  downloadHtml,
   type GoalId,
   type RegressionResult,
   type AnovaResult,
@@ -33,6 +35,7 @@ import {
 } from "@/lib/stats";
 import { formatNumber } from "@/lib/utils";
 import { useUsage, FREE_LIMIT, PRO_PRICE } from "@/store/usage";
+import { WorkspaceShell, Panel, ResultCard } from "@/components/WorkspaceShell";
 
 export default function AppPage() {
   const { isPro, remaining, recordAnalysis, setPro } = useUsage();
@@ -69,7 +72,6 @@ export default function AppPage() {
     setGoals(next);
     setSelected(toolsForGoals(next.length ? next : ["explore"]));
   };
-
   const toggleGoal = (id: GoalId) => {
     const next = goals.includes(id) ? goals.filter((g) => g !== id) : [...goals, id];
     applyGoals(next);
@@ -127,7 +129,6 @@ export default function AppPage() {
       setBundle(base);
       const adv: Record<string, unknown> = {};
       const snippets: string[] = [];
-
       if (selected.includes("regression") && yCol && xCols.length) {
         const r = linearRegression(rows, yCol, xCols);
         adv.regression = r;
@@ -157,23 +158,14 @@ export default function AppPage() {
         const r = coxRegression(rows, timeCol, eventCol, xCols);
         adv.cox = r;
         if ("plainEnglish" in r) snippets.push(r.plainEnglish);
-        if ("recommendations" in r) snippets.push(...r.recommendations.slice(0, 2));
       }
       if (selected.includes("multilevel") && yCol && clusterCol) {
         const r = multilevelRandomIntercept(rows, yCol, clusterCol, xCols);
         adv.multilevel = r;
         if ("plainEnglish" in r) snippets.push(r.plainEnglish);
       }
-
       setAdvanced(adv);
-      const narrative = buildNarrativeDraft({
-        fileName: fileName || undefined,
-        goals,
-        snippets,
-        n: base.profile.rows,
-        p: base.profile.columns,
-      });
-      setDraft(narrative);
+      setDraft(buildNarrativeDraft({ fileName: fileName || undefined, goals, snippets, n: base.profile.rows, p: base.profile.columns }));
       setRecs(buildRecommendations(snippets, goals));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Analysis failed.");
@@ -182,15 +174,9 @@ export default function AppPage() {
     }
   };
 
-  const downloadBrief = () => {
-    const blob = new Blob([draft], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `lumen-brief-${fileName || "analysis"}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const baseName = `lumen-brief-${(fileName || "analysis").replace(/\.csv$/i, "")}`;
+  const downloadTxt = () => downloadText(`${baseName}.txt`, draft);
+  const downloadPretty = () => downloadHtml(`${baseName}.html`, fileName || "Analysis", draft);
 
   const missingChart = useMemo(() => {
     if (!bundle) return [];
@@ -203,203 +189,253 @@ export default function AppPage() {
   const toggleX = (c: string) => setXCols((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
 
   return (
-    <div className="min-h-[80vh] bg-ink-50/40">
-      <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="font-display text-3xl text-ink-950">Statistical workspace</h1>
-            <p className="mt-1 text-sm text-ink-500">Goals → tools → models (incl. Cox) → client brief you can download</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="rounded-full border border-ink-200 bg-white px-4 py-2 text-xs text-ink-600 shadow-soft">
-              {isPro ? <span className="font-semibold text-lumen-700">Pro · unlimited</span> : <>Free · <strong>{left === Infinity ? "∞" : left}</strong> of {FREE_LIMIT}</>}
+    <WorkspaceShell
+      title="Statistical workspace"
+      subtitle="Goals → tools → models (Cox, multilevel, OLS…) → client brief you can download"
+      badge={
+        <div className="rounded-full border border-ink-200/80 bg-white/90 px-4 py-2 text-xs text-ink-600 shadow-soft">
+          {isPro ? <span className="font-semibold text-lumen-700">Pro · unlimited</span> : <>Free · <strong>{left === Infinity ? "∞" : left}</strong> of {FREE_LIMIT}</>}
+        </div>
+      }
+      actions={
+        !isPro ? (
+          <button onClick={() => setShowUpgrade(true)} className="btn-primary !px-4 !py-2 text-xs">
+            Upgrade ${PRO_PRICE}/mo
+          </button>
+        ) : null
+      }
+    >
+      {showUpgrade && (
+        <div className="mb-8 rounded-2xl border border-lumen-200 bg-gradient-to-br from-lumen-50 to-white p-6 shadow-soft">
+          <div className="flex items-start gap-3">
+            <Lock className="mt-0.5 h-5 w-5 text-lumen-700" />
+            <div className="flex-1">
+              <h3 className="font-semibold text-ink-950">Upgrade to Pro</h3>
+              <p className="mt-1 text-sm text-ink-600">Unlimited analysis packs for ${PRO_PRICE}/month.</p>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <button onClick={() => { setPro(true); setShowUpgrade(false); }} className="btn-primary !py-2 text-sm">Activate Pro (demo)</button>
+                <button onClick={() => setShowUpgrade(false)} className="btn-secondary !py-2 text-sm">Later</button>
+                <Link href="/pricing" className="py-2 text-sm text-lumen-700 underline">Plans</Link>
+              </div>
             </div>
-            {!isPro && <button onClick={() => setShowUpgrade(true)} className="rounded-full bg-ink-950 px-4 py-2 text-xs font-semibold text-white">Upgrade ${PRO_PRICE}/mo</button>}
           </div>
         </div>
+      )}
 
-        {showUpgrade && (
-          <div className="mt-6 rounded-2xl border border-lumen-200 bg-lumen-50 p-6">
-            <div className="flex items-start gap-3">
-              <Lock className="mt-0.5 h-5 w-5 text-lumen-700" />
-              <div className="flex-1">
-                <h3 className="font-semibold">Upgrade to Pro</h3>
-                <p className="mt-1 text-sm text-ink-600">Unlimited analyses for ${PRO_PRICE}/month.</p>
-                <div className="mt-4 flex gap-3">
-                  <button onClick={() => { setPro(true); setShowUpgrade(false); }} className="rounded-full bg-ink-950 px-5 py-2 text-sm font-semibold text-white">Activate Pro (demo)</button>
-                  <button onClick={() => setShowUpgrade(false)} className="rounded-full border px-5 py-2 text-sm">Later</button>
-                  <Link href="/pricing" className="py-2 text-sm text-lumen-700 underline">Plans</Link>
-                </div>
+      <div className="grid gap-8 lg:grid-cols-5">
+        <div className="space-y-5 lg:col-span-2">
+          <Panel title="Data" step="1">
+            <label className="flex cursor-pointer flex-col items-center rounded-2xl border-2 border-dashed border-ink-200/90 bg-gradient-to-b from-ink-50/50 to-white px-4 py-10 transition hover:border-lumen-300 hover:from-lumen-50/40">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-lumen-50 text-lumen-600 ring-1 ring-lumen-100">
+                <Upload className="h-5 w-5" />
               </div>
-            </div>
-          </div>
-        )}
+              <span className="mt-3 text-sm font-medium text-ink-800">Drop CSV or click to browse</span>
+              <span className="mt-1 text-xs text-ink-400">Analysis runs in your browser</span>
+              <input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
+            </label>
+            {fileName && (
+              <p className="mt-3 rounded-xl bg-ink-50 px-3 py-2 text-sm text-ink-700">
+                <span className="font-semibold text-ink-950">{fileName}</span>
+                {rows && ` · ${rows.length.toLocaleString()} rows`}
+              </p>
+            )}
+          </Panel>
 
-        <div className="mt-8 grid gap-8 lg:grid-cols-5">
-          <div className="space-y-6 lg:col-span-2">
-            <div className="rounded-2xl border bg-white p-6 shadow-soft">
-              <h2 className="flex items-center gap-2 text-sm font-semibold"><FileSpreadsheet className="h-4 w-4 text-lumen-600" /> 1. Data</h2>
-              <label className="mt-4 flex cursor-pointer flex-col items-center rounded-xl border-2 border-dashed border-ink-200 px-4 py-8 hover:border-lumen-300">
-                <Upload className="h-8 w-8 text-ink-400" /><span className="mt-2 text-sm font-medium">CSV upload</span>
-                <input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
-              </label>
-              {fileName && <p className="mt-3 text-sm"><span className="font-medium">{fileName}</span>{rows && ` · ${rows.length.toLocaleString()} rows`}</p>}
+          <Panel title="Client expectations" step="2">
+            <p className="mb-3 text-xs text-ink-500">Tools auto-select from goals — you can refine next.</p>
+            <div className="space-y-2">
+              {GOALS.map((g) => (
+                <label key={g.id} className={`flex cursor-pointer gap-2.5 rounded-xl border px-3 py-2.5 text-sm transition ${
+                  goals.includes(g.id) ? "border-lumen-200 bg-lumen-50/50" : "border-ink-100 hover:bg-ink-50"
+                }`}>
+                  <input type="checkbox" className="mt-0.5 accent-lumen-600" checked={goals.includes(g.id)} onChange={() => toggleGoal(g.id)} />
+                  <span>
+                    <span className="font-medium text-ink-900">{g.label}</span>
+                    <span className="block text-[11px] leading-snug text-ink-500">{g.description}</span>
+                  </span>
+                </label>
+              ))}
             </div>
+          </Panel>
 
-            <div className="rounded-2xl border bg-white p-6 shadow-soft">
-              <h2 className="text-sm font-semibold">2. Client expectations / goals</h2>
-              <p className="mt-1 text-xs text-ink-500">Pick what the client needs — tools auto-select.</p>
-              <div className="mt-3 space-y-2">
-                {GOALS.map((g) => (
-                  <label key={g.id} className="flex cursor-pointer gap-2 rounded-lg border border-ink-50 px-2 py-2 text-sm hover:bg-ink-50">
-                    <input type="checkbox" className="mt-0.5" checked={goals.includes(g.id)} onChange={() => toggleGoal(g.id)} />
-                    <span>
-                      <span className="font-medium text-ink-900">{g.label}</span>
-                      <span className="block text-[11px] text-ink-500">{g.description}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
+          <Panel title="Tools" step="3">
+            <div className="max-h-48 space-y-1 overflow-y-auto pr-1">
+              {STATS_CATALOG.map((c) => (
+                <label key={c.id} className="flex cursor-pointer flex-col rounded-lg px-2 py-1.5 text-sm hover:bg-ink-50">
+                  <span className="flex items-center gap-2">
+                    <input type="checkbox" className="accent-lumen-600" checked={selected.includes(c.id)} onChange={(e) => setSelected((p) => e.target.checked ? [...p, c.id] : p.filter((x) => x !== c.id))} />
+                    <span className="font-medium text-ink-800">{c.label}</span>
+                  </span>
+                  <span className="pl-6 text-[10px] text-ink-400">R: {c.r} · Stata: {c.stata}</span>
+                </label>
+              ))}
             </div>
+          </Panel>
 
-            <div className="rounded-2xl border bg-white p-6 shadow-soft">
-              <h2 className="text-sm font-semibold">3. Tools (auto from goals — editable)</h2>
-              <div className="mt-3 max-h-48 space-y-1 overflow-y-auto">
-                {STATS_CATALOG.map((c) => (
-                  <label key={c.id} className="flex cursor-pointer flex-col rounded px-2 py-1 text-sm hover:bg-ink-50">
-                    <span className="flex items-center gap-2">
-                      <input type="checkbox" checked={selected.includes(c.id)} onChange={(e) => setSelected((p) => e.target.checked ? [...p, c.id] : p.filter((x) => x !== c.id))} />
-                      <span className="font-medium">{c.label}</span>
-                    </span>
-                    <span className="pl-6 text-[10px] text-ink-400">R: {c.r} · Stata: {c.stata}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {rows && (
-              <div className="rounded-2xl border bg-white p-6 shadow-soft">
-                <h2 className="text-sm font-semibold">4. Variable roles</h2>
-                <div className="mt-3 space-y-3 text-sm">
-                  <label className="block">Outcome (Y) / response
-                    <select className="mt-1 w-full rounded-lg border px-2 py-1.5" value={yCol} onChange={(e) => setYCol(e.target.value)}>
-                      <option value="">—</option>{columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </label>
-                  <div>
-                    <p className="mb-1">Predictors / covariates (X) — regression, Cox, multilevel</p>
-                    <div className="flex flex-wrap gap-1">{numericGuess.map((c) => (
-                      <button key={c} type="button" onClick={() => toggleX(c)} className={`rounded-full px-2 py-0.5 text-xs ${xCols.includes(c) ? "bg-lumen-600 text-white" : "bg-ink-100"}`}>{c}</button>
-                    ))}</div>
-                  </div>
-                  <label className="block">Factor / group
-                    <select className="mt-1 w-full rounded-lg border px-2 py-1.5" value={factorCol} onChange={(e) => setFactorCol(e.target.value)}>
-                      <option value="">—</option>{columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </label>
-                  <label className="block">Second group / strata
-                    <select className="mt-1 w-full rounded-lg border px-2 py-1.5" value={groupCol} onChange={(e) => setGroupCol(e.target.value)}>
-                      <option value="">—</option>{columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </label>
-                  <label className="block">Cluster (multilevel)
-                    <select className="mt-1 w-full rounded-lg border px-2 py-1.5" value={clusterCol} onChange={(e) => setClusterCol(e.target.value)}>
-                      <option value="">—</option>{columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="block">Time<select className="mt-1 w-full rounded-lg border px-2 py-1.5" value={timeCol} onChange={(e) => setTimeCol(e.target.value)}><option value="">—</option>{columns.map((c) => <option key={c} value={c}>{c}</option>)}</select></label>
-                    <label className="block">Event 0/1<select className="mt-1 w-full rounded-lg border px-2 py-1.5" value={eventCol} onChange={(e) => setEventCol(e.target.value)}><option value="">—</option>{columns.map((c) => <option key={c} value={c}>{c}</option>)}</select></label>
+          {rows && (
+            <Panel title="Variable roles" step="4">
+              <div className="space-y-3 text-sm">
+                <Field label="Outcome (Y)">
+                  <Select value={yCol} onChange={setYCol} options={columns} />
+                </Field>
+                <div>
+                  <p className="mb-1.5 text-xs font-medium text-ink-600">Predictors (X)</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {numericGuess.map((c) => (
+                      <button key={c} type="button" onClick={() => toggleX(c)} className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${
+                        xCols.includes(c) ? "bg-lumen-600 text-white shadow-sm" : "bg-ink-100 text-ink-700 hover:bg-ink-200"
+                      }`}>{c}</button>
+                    ))}
                   </div>
                 </div>
-                <button disabled={!rows || busy} onClick={run} className="mt-6 flex w-full items-center justify-center gap-2 rounded-full bg-ink-950 py-3 text-sm font-semibold text-white disabled:opacity-40">
-                  {busy ? "Running…" : (<><Play className="h-4 w-4" /> Run analysis pack</>)}
+                <Field label="Factor / group"><Select value={factorCol} onChange={setFactorCol} options={columns} /></Field>
+                <Field label="Second group"><Select value={groupCol} onChange={setGroupCol} options={columns} /></Field>
+                <Field label="Cluster"><Select value={clusterCol} onChange={setClusterCol} options={columns} /></Field>
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="Time"><Select value={timeCol} onChange={setTimeCol} options={columns} /></Field>
+                  <Field label="Event 0/1"><Select value={eventCol} onChange={setEventCol} options={columns} /></Field>
+                </div>
+              </div>
+              <button disabled={!rows || busy} onClick={run} className="btn-primary mt-6 w-full disabled:opacity-40">
+                {busy ? "Running…" : (<><Play className="h-4 w-4" /> Run analysis pack</>)}
+              </button>
+            </Panel>
+          )}
+        </div>
+
+        <div className="space-y-5 lg:col-span-3">
+          {error && (
+            <div className="flex gap-2 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+              <AlertCircle className="h-4 w-4 shrink-0" />{error}
+            </div>
+          )}
+          {!bundle && !error && (
+            <div className="flex h-72 flex-col items-center justify-center rounded-3xl border border-dashed border-ink-200 bg-white/60 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-lumen-50 text-lumen-600">
+                <Sparkles className="h-6 w-6" />
+              </div>
+              <p className="mt-4 text-sm font-medium text-ink-700">Set goals, upload data, run the pack</p>
+              <p className="mt-1 max-w-xs text-xs text-ink-400">Results, charts, and a downloadable brief appear here.</p>
+            </div>
+          )}
+
+          {draft && (
+            <ResultCard title="Client brief" accent>
+              <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-xl border border-lumen-100/80 bg-white/80 p-4 text-xs leading-relaxed text-ink-800">{draft}</pre>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button onClick={downloadTxt} className="btn-accent">
+                  <Download className="h-4 w-4" /> Download .txt
+                </button>
+                <button onClick={downloadPretty} className="btn-secondary !py-2.5">
+                  <FileText className="h-4 w-4" /> Download HTML brief
                 </button>
               </div>
-            )}
-          </div>
+              {recs.length > 0 && (
+                <ul className="mt-4 space-y-2 border-t border-lumen-100 pt-4 text-sm text-ink-700">
+                  {recs.map((r, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-lumen-500" />
+                      {r}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </ResultCard>
+          )}
 
-          <div className="space-y-6 lg:col-span-3">
-            {error && <div className="flex gap-2 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><AlertCircle className="h-4 w-4" />{error}</div>}
-            {!bundle && !error && <div className="flex h-64 flex-col items-center justify-center rounded-2xl border border-dashed bg-white"><Sparkles className="h-8 w-8 text-ink-300" /><p className="mt-3 text-sm text-ink-600">Set goals, upload data, run the pack</p></div>}
-
-            {draft && (
-              <Sec title="Client brief (downloadable)">
-                <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-ink-50 p-4 text-xs text-ink-800">{draft}</pre>
-                <button onClick={downloadBrief} className="mt-3 inline-flex items-center gap-2 rounded-full bg-lumen-600 px-4 py-2 text-sm font-semibold text-white">
-                  <Download className="h-4 w-4" /> Download brief (.txt)
-                </button>
-                {recs.length > 0 && (
-                  <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-ink-700">
-                    {recs.map((r, i) => <li key={i}>{r}</li>)}
-                  </ul>
-                )}
-              </Sec>
-            )}
-
-            {bundle && selected.includes("overview") && (
-              <Sec title="Overview"><p className="text-sm text-ink-600">{bundle.profile.rows.toLocaleString()} × {bundle.profile.columns} · missing {formatNumber(bundle.profile.missingPct, 1)}%</p></Sec>
-            )}
-            {bundle && selected.includes("descriptive") && bundle.descriptive.length > 0 && (
-              <Sec title="Descriptives"><Tbl h={["Col", "Mean", "Median", "SD"]} r={bundle.descriptive.map((d) => [d.column, formatNumber(d.mean), formatNumber(d.median), formatNumber(d.std)])} /></Sec>
-            )}
-            {bundle && selected.includes("correlation") && (
-              <Sec title="Correlations">{bundle.correlations.slice(0, 8).map((c) => <div key={c.a + c.b} className="flex justify-between text-sm"><span>{c.a} ↔ {c.b}</span><strong>{c.r.toFixed(3)}</strong></div>)}</Sec>
-            )}
-
-            {isReg(advanced.regression) && (
-              <Sec title="OLS regression"><p className="text-sm text-ink-600">{advanced.regression.plainEnglish}</p>
-                <Tbl h={["Term", "Est", "SE", "t", "p"]} r={advanced.regression.coefficients.map((c) => [c.term, formatNumber(c.estimate, 4), formatNumber(c.stdError, 4), formatNumber(c.t, 3), c.p < 0.001 ? "<0.001" : formatNumber(c.p, 4)])} /></Sec>
-            )}
-            {isAnova(advanced.anova) && <Sec title="ANOVA"><p className="text-sm text-ink-600">{advanced.anova.plainEnglish}</p></Sec>}
-            {isT(advanced.ttest) && <Sec title="t-test"><p className="text-sm text-ink-600">{advanced.ttest.plainEnglish}</p></Sec>}
-            {isChi(advanced.chisq) && <Sec title="Chi-square"><p className="text-sm text-ink-600">{advanced.chisq.plainEnglish}</p></Sec>}
-
-            {isSurv(advanced.survival) && (
-              <Sec title="Kaplan–Meier">
-                <p className="mb-2 text-sm text-ink-600">{advanced.survival.plainEnglish}</p>
-                <div className="h-52"><ResponsiveContainer width="100%" height="100%"><LineChart>
-                  <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="time" type="number" allowDuplicatedCategory={false} /><YAxis domain={[0, 1]} /><Tooltip /><Legend />
-                  {advanced.survival.curves.map((c, i) => <Line key={c.group} data={c.points} dataKey="survival" name={c.group} type="stepAfter" dot={false} stroke={i ? "#f59e0b" : "#0c8ce9"} strokeWidth={2} />)}
-                </LineChart></ResponsiveContainer></div>
-              </Sec>
-            )}
-
-            {isCox(advanced.cox) && (
-              <Sec title="Cox proportional hazards (coxph / stcox)">
-                <p className="text-sm text-ink-600">{advanced.cox.plainEnglish}</p>
-                <p className="mt-1 text-xs text-ink-400">n={advanced.cox.n} · events={advanced.cox.events}</p>
-                <Tbl h={["Covariate", "coef", "HR", "SE", "z", "p"]} r={advanced.cox.coefficients.map((c) => [c.term, formatNumber(c.coef, 4), formatNumber(c.hr, 3), formatNumber(c.se, 4), formatNumber(c.z, 3), c.p < 0.001 ? "<0.001" : formatNumber(c.p, 4)])} />
-              </Sec>
-            )}
-            {"cox" in advanced && advanced.cox && "error" in (advanced.cox as object) && (
-              <Sec title="Cox"><p className="text-sm text-amber-700">{(advanced.cox as { error: string }).error}</p></Sec>
-            )}
-
-            {isML(advanced.multilevel) && (
-              <Sec title="Multilevel (lmer / mixed)">
-                <p className="text-sm text-ink-600">{advanced.multilevel.plainEnglish}</p>
-                <Tbl h={["Term", "Estimate"]} r={advanced.multilevel.fixed.map((f) => [f.term, formatNumber(f.estimate, 4)])} />
-              </Sec>
-            )}
-
-            {bundle && selected.includes("missing") && (
-              <Sec title="Missing">{bundle.missing.length === 0 ? <p className="text-sm">None</p> : (
-                <div className="h-40"><ResponsiveContainer width="100%" height="100%"><BarChart data={missingChart} layout="vertical"><XAxis type="number" unit="%" /><YAxis type="category" dataKey="name" width={80} /><Bar dataKey="pct" fill="#0c8ce9" /></BarChart></ResponsiveContainer></div>
-              )}</Sec>
-            )}
-          </div>
+          {bundle && selected.includes("overview") && (
+            <ResultCard title="Overview">
+              <p className="text-sm text-ink-600">{bundle.profile.rows.toLocaleString()} × {bundle.profile.columns} · missing {formatNumber(bundle.profile.missingPct, 1)}%</p>
+            </ResultCard>
+          )}
+          {bundle && selected.includes("descriptive") && bundle.descriptive.length > 0 && (
+            <ResultCard title="Descriptives">
+              <Tbl h={["Col", "Mean", "Median", "SD"]} r={bundle.descriptive.map((d) => [d.column, formatNumber(d.mean), formatNumber(d.median), formatNumber(d.std)])} />
+            </ResultCard>
+          )}
+          {bundle && selected.includes("correlation") && (
+            <ResultCard title="Correlations">
+              {bundle.correlations.slice(0, 8).map((c) => (
+                <div key={c.a + c.b} className="flex justify-between border-b border-ink-50 py-1.5 text-sm last:border-0">
+                  <span className="text-ink-600">{c.a} ↔ {c.b}</span>
+                  <strong>{c.r.toFixed(3)}</strong>
+                </div>
+              ))}
+            </ResultCard>
+          )}
+          {isReg(advanced.regression) && (
+            <ResultCard title="OLS regression">
+              <p className="text-sm text-ink-600">{advanced.regression.plainEnglish}</p>
+              <Tbl h={["Term", "Est", "SE", "t", "p"]} r={advanced.regression.coefficients.map((c) => [c.term, formatNumber(c.estimate, 4), formatNumber(c.stdError, 4), formatNumber(c.t, 3), c.p < 0.001 ? "<0.001" : formatNumber(c.p, 4)])} />
+            </ResultCard>
+          )}
+          {isAnova(advanced.anova) && <ResultCard title="ANOVA"><p className="text-sm text-ink-600">{advanced.anova.plainEnglish}</p></ResultCard>}
+          {isT(advanced.ttest) && <ResultCard title="t-test"><p className="text-sm text-ink-600">{advanced.ttest.plainEnglish}</p></ResultCard>}
+          {isChi(advanced.chisq) && <ResultCard title="Chi-square"><p className="text-sm text-ink-600">{advanced.chisq.plainEnglish}</p></ResultCard>}
+          {isSurv(advanced.survival) && (
+            <ResultCard title="Kaplan–Meier">
+              <p className="mb-3 text-sm text-ink-600">{advanced.survival.plainEnglish}</p>
+              <div className="h-52 rounded-xl bg-ink-50/50 p-2">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#eeeef0" />
+                    <XAxis dataKey="time" type="number" allowDuplicatedCategory={false} tick={{ fontSize: 11 }} />
+                    <YAxis domain={[0, 1]} tick={{ fontSize: 11 }} />
+                    <Tooltip /><Legend />
+                    {advanced.survival.curves.map((c, i) => (
+                      <Line key={c.group} data={c.points} dataKey="survival" name={c.group} type="stepAfter" dot={false} stroke={i ? "#f59e0b" : "#0c8ce9"} strokeWidth={2.5} />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </ResultCard>
+          )}
+          {isCox(advanced.cox) && (
+            <ResultCard title="Cox proportional hazards">
+              <p className="text-sm text-ink-600">{advanced.cox.plainEnglish}</p>
+              <p className="mt-1 text-xs text-ink-400">n={advanced.cox.n} · events={advanced.cox.events}</p>
+              <Tbl h={["Covariate", "coef", "HR", "SE", "z", "p"]} r={advanced.cox.coefficients.map((c) => [c.term, formatNumber(c.coef, 4), formatNumber(c.hr, 3), formatNumber(c.se, 4), formatNumber(c.z, 3), c.p < 0.001 ? "<0.001" : formatNumber(c.p, 4)])} />
+            </ResultCard>
+          )}
+          {isML(advanced.multilevel) && (
+            <ResultCard title="Multilevel">
+              <p className="text-sm text-ink-600">{advanced.multilevel.plainEnglish}</p>
+              <Tbl h={["Term", "Estimate"]} r={advanced.multilevel.fixed.map((f) => [f.term, formatNumber(f.estimate, 4)])} />
+            </ResultCard>
+          )}
+          {bundle && selected.includes("missing") && (
+            <ResultCard title="Missing data">
+              {bundle.missing.length === 0 ? <p className="text-sm text-ink-600">None</p> : (
+                <div className="h-40"><ResponsiveContainer width="100%" height="100%"><BarChart data={missingChart} layout="vertical"><XAxis type="number" unit="%" /><YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 11 }} /><Bar dataKey="pct" fill="#0c8ce9" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div>
+              )}
+            </ResultCard>
+          )}
         </div>
       </div>
-    </div>
+    </WorkspaceShell>
   );
 }
 
-function Sec({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="rounded-2xl border bg-white p-6 shadow-soft"><h3 className="text-sm font-semibold">{title}</h3><div className="mt-3">{children}</div></section>;
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <label className="block text-xs font-medium text-ink-600">{label}<div className="mt-1">{children}</div></label>;
+}
+function Select({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: string[] }) {
+  return (
+    <select className="w-full rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 shadow-sm outline-none focus:border-lumen-400 focus:ring-2 focus:ring-lumen-100" value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">—</option>
+      {options.map((c) => <option key={c} value={c}>{c}</option>)}
+    </select>
+  );
 }
 function Tbl({ h, r }: { h: string[]; r: string[][] }) {
-  return <div className="mt-2 overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="border-b text-ink-500">{h.map((x) => <th key={x} className="py-2 pr-3">{x}</th>)}</tr></thead><tbody>{r.map((row, i) => <tr key={i} className="border-b border-ink-50">{row.map((c, j) => <td key={j} className="py-1.5 pr-3">{c}</td>)}</tr>)}</tbody></table></div>;
+  return (
+    <div className="mt-3 overflow-x-auto rounded-xl border border-ink-100">
+      <table className="w-full text-left text-xs">
+        <thead><tr className="bg-ink-50 text-ink-500">{h.map((x) => <th key={x} className="px-3 py-2 font-medium">{x}</th>)}</tr></thead>
+        <tbody>{r.map((row, i) => <tr key={i} className="border-t border-ink-50">{row.map((c, j) => <td key={j} className="px-3 py-2 text-ink-800">{c}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
+  );
 }
 function isReg(x: unknown): x is RegressionResult { return !!x && typeof x === "object" && (x as RegressionResult).type === "ols"; }
 function isAnova(x: unknown): x is AnovaResult { return !!x && typeof x === "object" && (x as AnovaResult).type === "anova"; }
