@@ -16,7 +16,7 @@ export interface Goal {
   id: GoalId;
   label: string;
   description: string;
-  tools: string[]; // analysis ids
+  tools: string[];
 }
 
 export const GOALS: Goal[] = [
@@ -85,41 +85,43 @@ export const GOALS: Goal[] = [
 
 export function toolsForGoals(goalIds: GoalId[]): string[] {
   const set = new Set<string>();
-  for (const g of GOALS) {
-    if (goalIds.includes(g.id)) g.tools.forEach((t) => set.add(t));
+  for (let i = 0; i < GOALS.length; i++) {
+    const g = GOALS[i];
+    if (goalIds.indexOf(g.id) !== -1) {
+      for (let j = 0; j < g.tools.length; j++) set.add(g.tools[j]);
+    }
   }
-  return [...set];
+  return Array.from(set);
 }
 
 export interface NarrativeInput {
   fileName?: string;
   goals: GoalId[];
-  snippets: string[]; // plainEnglish lines from models
+  snippets: string[];
   n?: number;
   p?: number;
 }
 
-/** Build a client-facing draft they can download */
 export function buildNarrativeDraft(input: NarrativeInput): string {
   const date = new Date().toLocaleDateString(undefined, {
     year: "numeric",
     month: "long",
     day: "numeric",
   });
-  const goalLabels = GOALS.filter((g) => input.goals.includes(g.id))
+  const goalLabels = GOALS.filter((g) => input.goals.indexOf(g.id) !== -1)
     .map((g) => g.label)
     .join("; ");
 
   const lines: string[] = [];
   lines.push("LUMEN — ANALYTICAL BRIEF");
-  lines.push(`Generated ${date}`);
-  if (input.fileName) lines.push(`Dataset: ${input.fileName}`);
-  if (input.n != null) lines.push(`Sample size (cleaned): ${input.n.toLocaleString()} rows`);
+  lines.push("Generated " + date);
+  if (input.fileName) lines.push("Dataset: " + input.fileName);
+  if (input.n != null) lines.push("Sample size (cleaned): " + input.n.toLocaleString() + " rows");
   lines.push("");
   lines.push("1. PURPOSE");
   lines.push(
     goalLabels
-      ? `This run was guided by client goals: ${goalLabels}.`
+      ? "This run was guided by client goals: " + goalLabels + "."
       : "This run used a general exploratory configuration."
   );
   lines.push(
@@ -128,7 +130,7 @@ export function buildNarrativeDraft(input: NarrativeInput): string {
   lines.push("");
   lines.push("2. KEY FINDINGS");
   if (input.snippets.length) {
-    input.snippets.forEach((s, i) => lines.push(`(${i + 1}) ${s}`));
+    input.snippets.forEach((s, i) => lines.push("(" + (i + 1) + ") " + s));
   } else {
     lines.push("No model snippets were produced — check variable roles and selected tools.");
   }
@@ -164,16 +166,16 @@ export function buildNarrativeDraft(input: NarrativeInput): string {
 
 export function buildRecommendations(snippets: string[], goals: GoalId[]): string[] {
   const recs: string[] = [];
-  if (goals.includes("survival") || goals.includes("report")) {
+  if (goals.indexOf("survival") !== -1 || goals.indexOf("report") !== -1) {
     recs.push("For time-to-event work: report median survival and Cox hazard ratios side by side.");
   }
-  if (goals.includes("predict") || goals.includes("report")) {
+  if (goals.indexOf("predict") !== -1 || goals.indexOf("report") !== -1) {
     recs.push("For prediction: prefer adjusted R² and residual checks; avoid over-fitting with too many predictors.");
   }
-  if (goals.includes("hierarchy")) {
+  if (goals.indexOf("hierarchy") !== -1) {
     recs.push("With clustered data: lead with ICC, then fixed effects — readers need both levels of the story.");
   }
-  if (goals.includes("compare_groups")) {
+  if (goals.indexOf("compare_groups") !== -1) {
     recs.push("When comparing groups: pair significance tests with plain mean differences and sample sizes.");
   }
   if (snippets.some((s) => /p = 0\.0|p < 0\.05|significant/i.test(s))) {
