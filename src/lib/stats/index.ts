@@ -2,6 +2,7 @@ export * from "./core";
 export * from "./models";
 export * from "./cox";
 export * from "./advisor";
+export * from "./exportBrief";
 
 export const STATS_CATALOG = [
   { id: "overview", label: "Dataset overview", r: "str(), summary()", stata: "describe, codebook" },
