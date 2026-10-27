@@ -3,15 +3,72 @@
 @tailwind utilities;
 
 :root {
-  --background: #fafafa;
-  --foreground: #18181b;
+  --background: #f8f9fc;
+  --foreground: #0f1222;
+  --lumen: #0c8ce9;
+  --lumen-deep: #064b85;
+  --glass: rgba(255, 255, 255, 0.72);
+  --ring: rgba(12, 140, 233, 0.35);
 }
 
 body {
   color: var(--foreground);
-  background: var(--background);
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(12, 140, 233, 0.08), transparent 55%),
+    radial-gradient(900px 500px at 90% 0%, rgba(99, 102, 241, 0.06), transparent 50%),
+    var(--background);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: #d9d9de; border-radius: 4px; }
+::selection {
+  background: rgba(12, 140, 233, 0.18);
+  color: #0f1222;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #c4c8d4, #a8aebc);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+@layer components {
+  .glass {
+    @apply border border-white/60 bg-white/70 shadow-soft backdrop-blur-xl;
+  }
+  .card-hover {
+    @apply transition-all duration-300 hover:-translate-y-0.5 hover:border-lumen-200 hover:shadow-lift;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-b from-ink-900 to-ink-950 px-6 py-3 text-sm font-semibold text-white shadow-lift transition hover:from-ink-800 hover:to-ink-900 active:scale-[0.98];
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-ink-200/80 bg-white/90 px-6 py-3 text-sm font-semibold text-ink-800 shadow-soft transition hover:border-ink-300 hover:bg-white active:scale-[0.98];
+  }
+  .btn-accent {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-lumen-600 to-lumen-500 px-5 py-2.5 text-sm font-semibold text-white shadow-soft transition hover:from-lumen-500 hover:to-lumen-400 active:scale-[0.98];
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-lumen-200/80 bg-lumen-50/90 px-3 py-1 text-xs font-medium text-lumen-800 shadow-sm;
+  }
+  .section-label {
+    @apply text-[11px] font-semibold uppercase tracking-[0.14em] text-lumen-600;
+  }
+  .display {
+    @apply font-display tracking-tight text-ink-950;
+  }
+  .mesh {
+    background-image:
+      radial-gradient(at 40% 20%, rgba(12, 140, 233, 0.12) 0px, transparent 50%),
+      radial-gradient(at 80% 0%, rgba(99, 102, 241, 0.1) 0px, transparent 45%),
+      radial-gradient(at 0% 50%, rgba(14, 165, 233, 0.08) 0px, transparent 50%);
+  }
+}
