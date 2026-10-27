@@ -1,34 +1,45 @@
+"use client";
+
 import Link from "next/link";
-import { Check, Sparkles } from "lucide-react";
+import { Check, Sparkles, MapPin } from "lucide-react";
+import { useGeoPrice } from "@/hooks/useGeoPrice";
 
 const free = [
-  "3 full analysis packs / month",
+  "Email verification required",
+  "1 full analysis pack / month",
   "Goal-led tool selection",
   "OLS, ANOVA, t-test, chi-square",
   "Kaplan–Meier & Cox PH",
-  "Multilevel random intercept",
-  "Downloadable client brief (.txt)",
-  "Browser-side processing",
+  "Multilevel models",
+  "Downloadable client brief",
 ];
 
 const pro = [
   "Unlimited analysis packs",
   "Everything in Free",
   "Priority export packaging",
-  "Saved workspace history (soon)",
   "Email support",
   "Early access to new models",
 ];
 
 export default function PricingPage() {
+  const { price, loading } = useGeoPrice();
+
   return (
     <div className="mesh relative overflow-hidden">
       <div className="mx-auto max-w-5xl px-4 py-20 sm:px-6 sm:py-28">
         <div className="text-center">
-          <p className="chip mx-auto">Simple, honest pricing</p>
+          <p className="chip mx-auto">Simple, location-aware pricing</p>
           <h1 className="display mt-5 text-4xl sm:text-5xl">Start free. Scale when it pays off.</h1>
-          <p className="mx-auto mt-4 max-w-lg text-ink-600">
-            Try the full toolkit on real data. Upgrade only when you need unlimited runs.
+          <p className="mx-auto mt-4 flex max-w-lg flex-wrap items-center justify-center gap-2 text-ink-600">
+            <MapPin className="h-4 w-4 text-lumen-600" />
+            {loading ? (
+              "Detecting your region…"
+            ) : (
+              <>
+                Showing prices for <strong>{price.countryName}</strong> · {price.note}
+              </>
+            )}
           </p>
         </div>
 
@@ -36,9 +47,10 @@ export default function PricingPage() {
           <div className="rounded-3xl border border-ink-100 bg-white/90 p-8 shadow-soft backdrop-blur-sm">
             <p className="section-label">Free</p>
             <p className="mt-3 font-display text-5xl text-ink-950">
-              $0<span className="text-lg font-sans text-ink-400">/mo</span>
+              {price.currencySymbol}0
+              <span className="text-lg font-sans text-ink-400">/mo</span>
             </p>
-            <p className="mt-2 text-sm text-ink-500">See capacity before you commit.</p>
+            <p className="mt-2 text-sm text-ink-500">1 verified analysis per month · email required</p>
             <ul className="mt-8 space-y-3">
               {free.map((t) => (
                 <li key={t} className="flex items-start gap-2.5 text-sm text-ink-700">
@@ -60,9 +72,12 @@ export default function PricingPage() {
             </span>
             <p className="section-label !text-lumen-700">Pro</p>
             <p className="mt-3 font-display text-5xl text-ink-950">
-              $9<span className="text-lg font-sans text-ink-400">/mo</span>
+              {price.proLabel}
+              <span className="text-lg font-sans text-ink-400">/mo</span>
             </p>
-            <p className="mt-2 text-sm text-ink-500">Unlimited clarity for individuals and small teams.</p>
+            <p className="mt-2 text-sm text-ink-500">
+              Unlimited runs · billed in {price.currency}
+            </p>
             <ul className="mt-8 space-y-3">
               {pro.map((t) => (
                 <li key={t} className="flex items-start gap-2.5 text-sm text-ink-700">
@@ -74,10 +89,10 @@ export default function PricingPage() {
               ))}
             </ul>
             <Link href="/app?upgrade=1" className="btn-primary mt-10 w-full">
-              Upgrade to Pro
+              Upgrade · {price.proLabel}/mo
             </Link>
             <p className="mt-3 text-center text-xs text-ink-400">
-              Demo upgrade in-app. Stripe live billing can be connected next.
+              Local display from your IP. Stripe billing can charge in local currency next.
             </p>
           </div>
         </div>
