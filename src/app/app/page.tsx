@@ -34,12 +34,16 @@ import {
   type CoxResult,
 } from "@/lib/stats";
 import { formatNumber } from "@/lib/utils";
-import { useUsage, FREE_LIMIT, PRO_PRICE } from "@/store/usage";
+import { useUsage, FREE_LIMIT } from "@/store/usage";
 import { WorkspaceShell, Panel, ResultCard } from "@/components/WorkspaceShell";
+import { AuthGate, type AuthUser } from "@/components/AuthGate";
+import { useGeoPrice } from "@/hooks/useGeoPrice";
 
 export default function AppPage() {
-  const { isPro, remaining, recordAnalysis, setPro } = useUsage();
-  const left = remaining();
+  const { isPro, setPro } = useUsage();
+  const { price } = useGeoPrice();
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [goals, setGoals] = useState<GoalId[]>(["explore", "predict"]);
@@ -58,6 +62,11 @@ export default function AppPage() {
   const [timeCol, setTimeCol] = useState("");
   const [eventCol, setEventCol] = useState("");
   const [clusterCol, setClusterCol] = useState("");
+
+  const onAuth = useCallback((u: AuthUser | null) => {
+    setUser(u);
+    setAuthChecked(true);
+  }, []);
 
   const columns = useMemo(() => (rows?.length ? Object.keys(rows[0]) : []), [rows]);
   const numericGuess = useMemo(() => {
@@ -78,6 +87,10 @@ export default function AppPage() {
   };
 
   const onFile = useCallback((file: File) => {
+    if (!user && !isPro) {
+      setError("Verify your email before uploading.");
+      return;
+    }
     setError(null);
     setBundle(null);
     setAdvanced({});
@@ -114,17 +127,33 @@ export default function AppPage() {
         setError(err.message);
       },
     });
-  }, []);
+  }, [user, isPro]);
 
-  const run = () => {
+  const run = async () => {
     if (!rows) return;
-    if (!recordAnalysis()) {
-      setShowUpgrade(true);
+    if (!user && !isPro) {
+      setError("Verify your email first.");
       return;
     }
     setBusy(true);
     setError(null);
     try {
+      const usageRes = await fetch("/api/usage/record", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isPro }),
+      });
+      const usageData = await usageRes.json();
+      if (!usageRes.ok) {
+        setShowUpgrade(true);
+        setError(usageData.error || "Free allowance used.");
+        setBusy(false);
+        return;
+      }
+      if (user && typeof usageData.remaining === "number" && usageData.remaining !== Infinity) {
+        setUser({ ...user, freeRemaining: usageData.remaining, freeUsed: FREE_LIMIT - usageData.remaining });
+      }
+
       const base = analyzeDataset(rows);
       setBundle(base);
       const adv: Record<string, unknown> = {};
@@ -188,19 +217,29 @@ export default function AppPage() {
 
   const toggleX = (c: string) => setXCols((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
 
+  const freeLeft = user?.freeRemaining ?? FREE_LIMIT;
+
   return (
     <WorkspaceShell
       title="Statistical workspace"
-      subtitle="Goals → tools → models (Cox, multilevel, OLS…) → client brief you can download"
+      subtitle="Verified email required · 1 free analysis / month · local currency on pricing"
       badge={
         <div className="rounded-full border border-ink-200/80 bg-white/90 px-4 py-2 text-xs text-ink-600 shadow-soft">
-          {isPro ? <span className="font-semibold text-lumen-700">Pro · unlimited</span> : <>Free · <strong>{left === Infinity ? "∞" : left}</strong> of {FREE_LIMIT}</>}
+          {isPro ? (
+            <span className="font-semibold text-lumen-700">Pro · unlimited</span>
+          ) : user ? (
+            <>
+              {user.email} · free left <strong>{freeLeft}</strong>/{FREE_LIMIT}
+            </>
+          ) : (
+            <>Sign in required</>
+          )}
         </div>
       }
       actions={
         !isPro ? (
           <button onClick={() => setShowUpgrade(true)} className="btn-primary !px-4 !py-2 text-xs">
-            Upgrade ${PRO_PRICE}/mo
+            Upgrade {price.proLabel}/mo
           </button>
         ) : null
       }
@@ -211,7 +250,9 @@ export default function AppPage() {
             <Lock className="mt-0.5 h-5 w-5 text-lumen-700" />
             <div className="flex-1">
               <h3 className="font-semibold text-ink-950">Upgrade to Pro</h3>
-              <p className="mt-1 text-sm text-ink-600">Unlimited analysis packs for ${PRO_PRICE}/month.</p>
+              <p className="mt-1 text-sm text-ink-600">
+                Unlimited packs for <strong>{price.proLabel}/month</strong> ({price.note}).
+              </p>
               <div className="mt-4 flex flex-wrap gap-3">
                 <button onClick={() => { setPro(true); setShowUpgrade(false); }} className="btn-primary !py-2 text-sm">Activate Pro (demo)</button>
                 <button onClick={() => setShowUpgrade(false)} className="btn-secondary !py-2 text-sm">Later</button>
@@ -222,6 +263,14 @@ export default function AppPage() {
         </div>
       )}
 
+      {authChecked && !user && !isPro && (
+        <div className="mb-8">
+          <AuthGate onReady={onAuth} />
+        </div>
+      )}
+      {!authChecked && <AuthGate onReady={onAuth} />}
+
+      {(user || isPro) && (
       <div className="grid gap-8 lg:grid-cols-5">
         <div className="space-y-5 lg:col-span-2">
           <Panel title="Data" step="1">
@@ -230,7 +279,7 @@ export default function AppPage() {
                 <Upload className="h-5 w-5" />
               </div>
               <span className="mt-3 text-sm font-medium text-ink-800">Drop CSV or click to browse</span>
-              <span className="mt-1 text-xs text-ink-400">Analysis runs in your browser</span>
+              <span className="mt-1 text-xs text-ink-400">1 free analysis this month after verify</span>
               <input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
             </label>
             {fileName && (
@@ -242,7 +291,6 @@ export default function AppPage() {
           </Panel>
 
           <Panel title="Client expectations" step="2">
-            <p className="mb-3 text-xs text-ink-500">Tools auto-select from goals — you can refine next.</p>
             <div className="space-y-2">
               {GOALS.map((g) => (
                 <label key={g.id} className={`flex cursor-pointer gap-2.5 rounded-xl border px-3 py-2.5 text-sm transition ${
@@ -251,7 +299,7 @@ export default function AppPage() {
                   <input type="checkbox" className="mt-0.5 accent-lumen-600" checked={goals.includes(g.id)} onChange={() => toggleGoal(g.id)} />
                   <span>
                     <span className="font-medium text-ink-900">{g.label}</span>
-                    <span className="block text-[11px] leading-snug text-ink-500">{g.description}</span>
+                    <span className="block text-[11px] text-ink-500">{g.description}</span>
                   </span>
                 </label>
               ))}
@@ -259,12 +307,12 @@ export default function AppPage() {
           </Panel>
 
           <Panel title="Tools" step="3">
-            <div className="max-h-48 space-y-1 overflow-y-auto pr-1">
+            <div className="max-h-48 space-y-1 overflow-y-auto">
               {STATS_CATALOG.map((c) => (
                 <label key={c.id} className="flex cursor-pointer flex-col rounded-lg px-2 py-1.5 text-sm hover:bg-ink-50">
                   <span className="flex items-center gap-2">
                     <input type="checkbox" className="accent-lumen-600" checked={selected.includes(c.id)} onChange={(e) => setSelected((p) => e.target.checked ? [...p, c.id] : p.filter((x) => x !== c.id))} />
-                    <span className="font-medium text-ink-800">{c.label}</span>
+                    <span className="font-medium">{c.label}</span>
                   </span>
                   <span className="pl-6 text-[10px] text-ink-400">R: {c.r} · Stata: {c.stata}</span>
                 </label>
@@ -275,25 +323,23 @@ export default function AppPage() {
           {rows && (
             <Panel title="Variable roles" step="4">
               <div className="space-y-3 text-sm">
-                <Field label="Outcome (Y)">
-                  <Select value={yCol} onChange={setYCol} options={columns} />
-                </Field>
+                <Field label="Outcome (Y)"><Select value={yCol} onChange={setYCol} options={columns} /></Field>
                 <div>
                   <p className="mb-1.5 text-xs font-medium text-ink-600">Predictors (X)</p>
                   <div className="flex flex-wrap gap-1.5">
                     {numericGuess.map((c) => (
-                      <button key={c} type="button" onClick={() => toggleX(c)} className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${
-                        xCols.includes(c) ? "bg-lumen-600 text-white shadow-sm" : "bg-ink-100 text-ink-700 hover:bg-ink-200"
+                      <button key={c} type="button" onClick={() => toggleX(c)} className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                        xCols.includes(c) ? "bg-lumen-600 text-white" : "bg-ink-100"
                       }`}>{c}</button>
                     ))}
                   </div>
                 </div>
-                <Field label="Factor / group"><Select value={factorCol} onChange={setFactorCol} options={columns} /></Field>
-                <Field label="Second group"><Select value={groupCol} onChange={setGroupCol} options={columns} /></Field>
+                <Field label="Factor"><Select value={factorCol} onChange={setFactorCol} options={columns} /></Field>
+                <Field label="Group"><Select value={groupCol} onChange={setGroupCol} options={columns} /></Field>
                 <Field label="Cluster"><Select value={clusterCol} onChange={setClusterCol} options={columns} /></Field>
                 <div className="grid grid-cols-2 gap-2">
                   <Field label="Time"><Select value={timeCol} onChange={setTimeCol} options={columns} /></Field>
-                  <Field label="Event 0/1"><Select value={eventCol} onChange={setEventCol} options={columns} /></Field>
+                  <Field label="Event"><Select value={eventCol} onChange={setEventCol} options={columns} /></Field>
                 </div>
               </div>
               <button disabled={!rows || busy} onClick={run} className="btn-primary mt-6 w-full disabled:opacity-40">
@@ -304,114 +350,58 @@ export default function AppPage() {
         </div>
 
         <div className="space-y-5 lg:col-span-3">
-          {error && (
-            <div className="flex gap-2 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-              <AlertCircle className="h-4 w-4 shrink-0" />{error}
-            </div>
-          )}
+          {error && <div className="flex gap-2 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><AlertCircle className="h-4 w-4" />{error}</div>}
           {!bundle && !error && (
-            <div className="flex h-72 flex-col items-center justify-center rounded-3xl border border-dashed border-ink-200 bg-white/60 text-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-lumen-50 text-lumen-600">
-                <Sparkles className="h-6 w-6" />
-              </div>
-              <p className="mt-4 text-sm font-medium text-ink-700">Set goals, upload data, run the pack</p>
-              <p className="mt-1 max-w-xs text-xs text-ink-400">Results, charts, and a downloadable brief appear here.</p>
+            <div className="flex h-72 flex-col items-center justify-center rounded-3xl border border-dashed border-ink-200 bg-white/60">
+              <Sparkles className="h-8 w-8 text-lumen-500" />
+              <p className="mt-3 text-sm font-medium text-ink-700">Upload and run after email verify</p>
             </div>
           )}
-
           {draft && (
             <ResultCard title="Client brief" accent>
-              <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-xl border border-lumen-100/80 bg-white/80 p-4 text-xs leading-relaxed text-ink-800">{draft}</pre>
+              <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-xl bg-white/80 p-4 text-xs">{draft}</pre>
               <div className="mt-4 flex flex-wrap gap-2">
-                <button onClick={downloadTxt} className="btn-accent">
-                  <Download className="h-4 w-4" /> Download .txt
-                </button>
-                <button onClick={downloadPretty} className="btn-secondary !py-2.5">
-                  <FileText className="h-4 w-4" /> Download HTML brief
-                </button>
+                <button onClick={downloadTxt} className="btn-accent"><Download className="h-4 w-4" /> .txt</button>
+                <button onClick={downloadPretty} className="btn-secondary !py-2.5"><FileText className="h-4 w-4" /> HTML</button>
               </div>
-              {recs.length > 0 && (
-                <ul className="mt-4 space-y-2 border-t border-lumen-100 pt-4 text-sm text-ink-700">
-                  {recs.map((r, i) => (
-                    <li key={i} className="flex gap-2">
-                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-lumen-500" />
-                      {r}
-                    </li>
-                  ))}
-                </ul>
-              )}
+              {recs.length > 0 && <ul className="mt-4 space-y-1 text-sm text-ink-700">{recs.map((r, i) => <li key={i}>• {r}</li>)}</ul>}
             </ResultCard>
           )}
-
-          {bundle && selected.includes("overview") && (
-            <ResultCard title="Overview">
-              <p className="text-sm text-ink-600">{bundle.profile.rows.toLocaleString()} × {bundle.profile.columns} · missing {formatNumber(bundle.profile.missingPct, 1)}%</p>
-            </ResultCard>
-          )}
+          {bundle && selected.includes("overview") && <ResultCard title="Overview"><p className="text-sm">{bundle.profile.rows} × {bundle.profile.columns}</p></ResultCard>}
           {bundle && selected.includes("descriptive") && bundle.descriptive.length > 0 && (
-            <ResultCard title="Descriptives">
-              <Tbl h={["Col", "Mean", "Median", "SD"]} r={bundle.descriptive.map((d) => [d.column, formatNumber(d.mean), formatNumber(d.median), formatNumber(d.std)])} />
-            </ResultCard>
-          )}
-          {bundle && selected.includes("correlation") && (
-            <ResultCard title="Correlations">
-              {bundle.correlations.slice(0, 8).map((c) => (
-                <div key={c.a + c.b} className="flex justify-between border-b border-ink-50 py-1.5 text-sm last:border-0">
-                  <span className="text-ink-600">{c.a} ↔ {c.b}</span>
-                  <strong>{c.r.toFixed(3)}</strong>
-                </div>
-              ))}
-            </ResultCard>
+            <ResultCard title="Descriptives"><Tbl h={["Col", "Mean", "SD"]} r={bundle.descriptive.map((d) => [d.column, formatNumber(d.mean), formatNumber(d.std)])} /></ResultCard>
           )}
           {isReg(advanced.regression) && (
-            <ResultCard title="OLS regression">
-              <p className="text-sm text-ink-600">{advanced.regression.plainEnglish}</p>
-              <Tbl h={["Term", "Est", "SE", "t", "p"]} r={advanced.regression.coefficients.map((c) => [c.term, formatNumber(c.estimate, 4), formatNumber(c.stdError, 4), formatNumber(c.t, 3), c.p < 0.001 ? "<0.001" : formatNumber(c.p, 4)])} />
-            </ResultCard>
+            <ResultCard title="OLS"><p className="text-sm">{advanced.regression.plainEnglish}</p>
+              <Tbl h={["Term", "Est", "p"]} r={advanced.regression.coefficients.map((c) => [c.term, formatNumber(c.estimate, 4), c.p < 0.001 ? "<0.001" : formatNumber(c.p, 4)])} /></ResultCard>
           )}
-          {isAnova(advanced.anova) && <ResultCard title="ANOVA"><p className="text-sm text-ink-600">{advanced.anova.plainEnglish}</p></ResultCard>}
-          {isT(advanced.ttest) && <ResultCard title="t-test"><p className="text-sm text-ink-600">{advanced.ttest.plainEnglish}</p></ResultCard>}
-          {isChi(advanced.chisq) && <ResultCard title="Chi-square"><p className="text-sm text-ink-600">{advanced.chisq.plainEnglish}</p></ResultCard>}
+          {isAnova(advanced.anova) && <ResultCard title="ANOVA"><p className="text-sm">{advanced.anova.plainEnglish}</p></ResultCard>}
+          {isT(advanced.ttest) && <ResultCard title="t-test"><p className="text-sm">{advanced.ttest.plainEnglish}</p></ResultCard>}
+          {isChi(advanced.chisq) && <ResultCard title="Chi-square"><p className="text-sm">{advanced.chisq.plainEnglish}</p></ResultCard>}
           {isSurv(advanced.survival) && (
             <ResultCard title="Kaplan–Meier">
-              <p className="mb-3 text-sm text-ink-600">{advanced.survival.plainEnglish}</p>
-              <div className="h-52 rounded-xl bg-ink-50/50 p-2">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#eeeef0" />
-                    <XAxis dataKey="time" type="number" allowDuplicatedCategory={false} tick={{ fontSize: 11 }} />
-                    <YAxis domain={[0, 1]} tick={{ fontSize: 11 }} />
-                    <Tooltip /><Legend />
-                    {advanced.survival.curves.map((c, i) => (
-                      <Line key={c.group} data={c.points} dataKey="survival" name={c.group} type="stepAfter" dot={false} stroke={i ? "#f59e0b" : "#0c8ce9"} strokeWidth={2.5} />
-                    ))}
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
+              <p className="mb-2 text-sm">{advanced.survival.plainEnglish}</p>
+              <div className="h-48"><ResponsiveContainer width="100%" height="100%"><LineChart>
+                <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="time" type="number" allowDuplicatedCategory={false} /><YAxis domain={[0, 1]} /><Tooltip /><Legend />
+                {advanced.survival.curves.map((c, i) => <Line key={c.group} data={c.points} dataKey="survival" name={c.group} type="stepAfter" dot={false} stroke={i ? "#f59e0b" : "#0c8ce9"} strokeWidth={2} />)}
+              </LineChart></ResponsiveContainer></div>
             </ResultCard>
           )}
           {isCox(advanced.cox) && (
-            <ResultCard title="Cox proportional hazards">
-              <p className="text-sm text-ink-600">{advanced.cox.plainEnglish}</p>
-              <p className="mt-1 text-xs text-ink-400">n={advanced.cox.n} · events={advanced.cox.events}</p>
-              <Tbl h={["Covariate", "coef", "HR", "SE", "z", "p"]} r={advanced.cox.coefficients.map((c) => [c.term, formatNumber(c.coef, 4), formatNumber(c.hr, 3), formatNumber(c.se, 4), formatNumber(c.z, 3), c.p < 0.001 ? "<0.001" : formatNumber(c.p, 4)])} />
+            <ResultCard title="Cox PH">
+              <p className="text-sm">{advanced.cox.plainEnglish}</p>
+              <Tbl h={["Var", "HR", "p"]} r={advanced.cox.coefficients.map((c) => [c.term, formatNumber(c.hr, 3), c.p < 0.001 ? "<0.001" : formatNumber(c.p, 4)])} />
             </ResultCard>
           )}
-          {isML(advanced.multilevel) && (
-            <ResultCard title="Multilevel">
-              <p className="text-sm text-ink-600">{advanced.multilevel.plainEnglish}</p>
-              <Tbl h={["Term", "Estimate"]} r={advanced.multilevel.fixed.map((f) => [f.term, formatNumber(f.estimate, 4)])} />
-            </ResultCard>
-          )}
+          {isML(advanced.multilevel) && <ResultCard title="Multilevel"><p className="text-sm">{advanced.multilevel.plainEnglish}</p></ResultCard>}
           {bundle && selected.includes("missing") && (
-            <ResultCard title="Missing data">
-              {bundle.missing.length === 0 ? <p className="text-sm text-ink-600">None</p> : (
-                <div className="h-40"><ResponsiveContainer width="100%" height="100%"><BarChart data={missingChart} layout="vertical"><XAxis type="number" unit="%" /><YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 11 }} /><Bar dataKey="pct" fill="#0c8ce9" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div>
-              )}
-            </ResultCard>
+            <ResultCard title="Missing">{bundle.missing.length === 0 ? <p className="text-sm">None</p> : (
+              <div className="h-36"><ResponsiveContainer width="100%" height="100%"><BarChart data={missingChart} layout="vertical"><XAxis type="number" unit="%" /><YAxis type="category" dataKey="name" width={80} /><Bar dataKey="pct" fill="#0c8ce9" /></BarChart></ResponsiveContainer></div>
+            )}</ResultCard>
           )}
         </div>
       </div>
+      )}
     </WorkspaceShell>
   );
 }
@@ -421,7 +411,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 function Select({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: string[] }) {
   return (
-    <select className="w-full rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 shadow-sm outline-none focus:border-lumen-400 focus:ring-2 focus:ring-lumen-100" value={value} onChange={(e) => onChange(e.target.value)}>
+    <select className="w-full rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm" value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">—</option>
       {options.map((c) => <option key={c} value={c}>{c}</option>)}
     </select>
@@ -431,8 +421,8 @@ function Tbl({ h, r }: { h: string[]; r: string[][] }) {
   return (
     <div className="mt-3 overflow-x-auto rounded-xl border border-ink-100">
       <table className="w-full text-left text-xs">
-        <thead><tr className="bg-ink-50 text-ink-500">{h.map((x) => <th key={x} className="px-3 py-2 font-medium">{x}</th>)}</tr></thead>
-        <tbody>{r.map((row, i) => <tr key={i} className="border-t border-ink-50">{row.map((c, j) => <td key={j} className="px-3 py-2 text-ink-800">{c}</td>)}</tr>)}</tbody>
+        <thead><tr className="bg-ink-50 text-ink-500">{h.map((x) => <th key={x} className="px-3 py-2">{x}</th>)}</tr></thead>
+        <tbody>{r.map((row, i) => <tr key={i} className="border-t border-ink-50">{row.map((c, j) => <td key={j} className="px-3 py-2">{c}</td>)}</tr>)}</tbody>
       </table>
     </div>
   );
