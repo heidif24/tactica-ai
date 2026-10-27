@@ -21,12 +21,14 @@ export function AuthGate({
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
+  const [done, setDone] = useState(false);
 
   useEffect(() => {
     fetch("/api/auth/me")
       .then((r) => r.json())
       .then((d) => {
         if (d.authenticated) {
+          setDone(true);
           onReady({ email: d.email, freeRemaining: d.freeRemaining, freeUsed: d.freeUsed });
         } else {
           onReady(null);
@@ -73,6 +75,7 @@ export function AuthGate({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Verification failed");
       const me = await fetch("/api/auth/me").then((r) => r.json());
+      setDone(true);
       onReady({
         email: me.email,
         freeRemaining: me.freeRemaining,
@@ -93,6 +96,8 @@ export function AuthGate({
     );
   }
 
+  if (done) return null;
+
   return (
     <div className="rounded-2xl border border-lumen-200 bg-gradient-to-br from-lumen-50 to-white p-6 shadow-soft">
       <div className="flex items-start gap-3">
@@ -102,7 +107,7 @@ export function AuthGate({
         <div className="flex-1">
           <h3 className="font-semibold text-ink-950">Verify your email to continue</h3>
           <p className="mt-1 text-sm text-ink-600">
-            Free plan: <strong>1 analysis per month</strong> per verified email. This stops duplicate free accounts from the same inbox.
+            Free plan: <strong>1 analysis per month</strong> per verified email. This stops abuse of the free tier.
           </p>
 
           {step === "email" && (
@@ -132,7 +137,7 @@ export function AuthGate({
 
           {step === "code" && (
             <div className="mt-4 space-y-3">
-              <p className="text-xs text-ink-500">Code sent to <strong>{email}</strong></p>
+              <p className="text-xs text-ink-500">Code for <strong>{email}</strong></p>
               {hint && <p className="rounded-lg bg-ink-50 px-3 py-2 text-xs text-ink-600">{hint}</p>}
               <label className="block text-xs font-medium text-ink-600">
                 6-digit code
